@@ -18,15 +18,15 @@ repos:
       - id: pytest-coverage
         name: Run Pytest Coverage
         entry: env PYTHONPATH=src pytest --cov=src --cov-report=term-missing
-        language: system
+        language: python
+        additional_dependencies: [pytest, pytest-cov, hypothesis, coverage, "file:///Users/samuel/repos/ml-switcheroo-compiler", "file:///Users/samuel/repos/zero-jax"]
         types: [python]
         pass_filenames: false
 
       - id: update-badges
         name: Update Coverage Shields
-        entry: python3 scripts/update_badges.py
-        language: system
+        entry: python scripts/update_badges.py
+        language: python
+        additional_dependencies: [coverage, interrogate]
         types: [python]
-        pass_filenames: false
-
         pass_filenames: false

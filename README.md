@@ -9,26 +9,26 @@
 
 This repository is a foundational component of the **Abstract ML Machine Ecosystem**, designed to solve the **$N \times M$ translation problem** in Machine Learning. 
 
-Currently, the ML landscape is heavily fragmented. If you write a model in JAX, PyTorch, Keras, or MLX (the $N$ frontends), deploying that model efficiently across WASM, WebGPU, TensorRT, or custom edge hardware (the $M$ backends) usually requires building and maintaining bespoke, complex translation pipelines for every single combination. 
+Currently, the ML landscape is heavily fragmented. If you write a model in [JAX](https://github.com/google/jax), [PyTorch](https://pytorch.org/), [Keras](https://keras.io/), or [MLX](https://github.com/ml-explore/mlx) (the $N$ frontends), deploying that model efficiently across [WASM](https://webassembly.org/), [WebGPU](https://www.w3.org/TR/webgpu/), [TensorRT](https://developer.nvidia.com/tensorrt), or custom edge hardware (the $M$ backends) usually requires building and maintaining bespoke, complex translation pipelines for every single combination. 
 
 ### The Zero-Dependency Approach
 
-`zero-chex` exists to address this by providing a **strictly zero external dependency** implementation of the chex API surface. It relies solely on the Python Standard Library and `numpy` (for eager evaluations). 
+`zero-chex` exists to address this by providing a **strictly zero external dependency** implementation of the [chex](https://github.com/google-deepmind/chex) API surface. It relies solely on the Python Standard Library and [`numpy`](https://numpy.org/) (for eager evaluations). 
 
-Instead of wrapping heavy C++ binaries or relying on XLA, `zero-chex` mimics the public chex API and acts as a pure Python frontend. 
+Instead of wrapping heavy C++ binaries or relying on [XLA](https://openxla.org/), `zero-chex` mimics the public [chex](https://github.com/google-deepmind/chex) API and acts as a pure Python frontend. 
 
-When you execute code using `zero-chex`, it delegates to `zero-jax` and `ml-switcheroo-compiler` which dynamically traces the operations using proxy tensors. The resulting IR can then be seamlessly consumed by various backends, enabling a robust **source-to-source** and **source-to-browser** compilation pipeline.
+When you execute code using `zero-chex`, it delegates to [`zero-jax`](https://github.com/SamuelMarks/zero-jax) and [`ml-switcheroo-compiler`](https://github.com/SamuelMarks/ml-switcheroo-compiler) which dynamically traces the operations using proxy tensors. The resulting IR can then be seamlessly consumed by various backends, enabling a robust **source-to-source** and **source-to-browser** compilation pipeline.
 
 ### Part of a Larger Ecosystem
 
 `zero-chex` is not a standalone numerical library, but rather Tier 4 of the ML Switcheroo architecture:
-1. **Tier 1 (`ml-switcheroo-ir`):** Defines the canonical logical graph dialect (ONNX spec compliance).
-2. **Tier 2 (`ml-switcheroo-compiler`):** The computational heart, featuring AOT tracing, ProxyTensors, reverse-mode automatic differentiation, and optimizations like Dead Code Elimination (DCE).
-3. **Tier 3 (`zero-jax`):** Provides the functional foundation and JAX API parity. Pytree flattening is used to safely route state into the compiler tape.
-4. **Tier 4 (Frontends & Add-ons):** Repositories like `zero-flax`, `zero-optax`, and `zero-chex` build on top of `zero-jax` to provide Neural Network layers, optimizers, and typing without any heavy external dependencies.
-5. **Tier 5 (`zero-zoo`):** Headless CI pipelines that train models deterministically to assert float-for-float equivalence ("Golden Seed" testing) across all simulated frameworks.
+1. **Tier 1 ([`ml-switcheroo-ir`](https://github.com/SamuelMarks/ml-switcheroo-ir)):** Defines the canonical logical graph dialect ([ONNX](https://onnx.ai/) spec compliance).
+2. **Tier 2 ([`ml-switcheroo-compiler`](https://github.com/SamuelMarks/ml-switcheroo-compiler)):** The computational heart, featuring AOT tracing, ProxyTensors, reverse-mode automatic differentiation, and optimizations like Dead Code Elimination (DCE).
+3. **Tier 3 ([`zero-jax`](https://github.com/SamuelMarks/zero-jax)):** Provides the functional foundation and [JAX](https://github.com/google/jax) API parity. Pytree flattening is used to safely route state into the compiler tape.
+4. **Tier 4 (Frontends & Add-ons):** Repositories like [`zero-flax`](https://github.com/SamuelMarks/zero-flax), [`zero-optax`](https://github.com/SamuelMarks/zero-optax), and `zero-chex` build on top of [`zero-jax`](https://github.com/SamuelMarks/zero-jax) to provide Neural Network layers, optimizers, and typing without any heavy external dependencies.
+5. **Tier 5 ([`zero-zoo`](https://github.com/SamuelMarks/zero-zoo)):** Headless CI pipelines that train models deterministically to assert float-for-float equivalence ("Golden Seed" testing) across all simulated frameworks.
 
-By maintaining structural API parity with the real chex framework (verified via `ml-framework-snapshots`), `zero-chex` allows users to drop it in as a lightweight substitute in environments where installing the massive official chex/JAX/XLA stack is unfeasible—such as highly constrained serverless functions, or directly inside a web browser natively via Pyodide and PyScript.
+By maintaining structural API parity with the real [chex](https://github.com/google-deepmind/chex) framework (verified via [`ml-framework-snapshots`](https://github.com/SamuelMarks/ml-framework-snapshots)), `zero-chex` allows users to drop it in as a lightweight substitute in environments where installing the massive official [chex](https://github.com/google-deepmind/chex)/[JAX](https://github.com/google/jax)/[XLA](https://openxla.org/) stack is unfeasible—such as highly constrained serverless functions, or directly inside a web browser natively via [Pyodide](https://pyodide.org/) and [PyScript](https://pyscript.net/).
 
 ---
 

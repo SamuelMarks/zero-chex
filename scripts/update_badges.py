@@ -36,10 +36,17 @@ def get_test_coverage():
 
 def get_doc_coverage():
     try:
-        result = subprocess.run(["interrogate", "--generate-badge", "."], capture_output=True, text=True, check=False)
+        result = subprocess.run(
+            ["interrogate", "--generate-badge", "."],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
         # Actually better to just run `interrogate -c pyproject.toml src` and parse the output or use a badge generator.
         # Wait, let's just parse the output of `interrogate -vv src` or generate json.
-        result = subprocess.run(["interrogate", "src"], capture_output=True, text=True, check=False)
+        result = subprocess.run(
+            ["interrogate", "src"], capture_output=True, text=True, check=False
+        )
         # The output usually ends with `RESULT: PASSED (minimum: 80.0%, actual: 100.0%)`
         # Let's use regex to find `actual: (\d+\.?\d*)%`
         match = re.search(r"actual: (\d+\.?\d*)%", result.stdout)

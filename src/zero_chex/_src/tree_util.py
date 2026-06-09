@@ -6,22 +6,26 @@ import zero_jax.tree_util as jtu
 
 
 def tree_leaves(tree: Any) -> List[Any]:
+    """Docstring."""
     return jtu.tree_flatten(tree)[0]
 
 
 def tree_map(f: Callable, tree: Any) -> Any:
+    """Docstring."""
     leaves, treedef = jtu.tree_flatten(tree)
     new_leaves = [f(leaf) for leaf in leaves]
     return jtu.tree_unflatten(treedef, new_leaves)
 
 
 def tree_all(tree: Any) -> bool:
+    """Docstring."""
     return all(tree_leaves(tree))
 
 
 def tree_flatten_with_path(
     tree: Any, current_path: str = ""
 ) -> Tuple[List[Tuple[str, Any]], Any]:
+    """Docstring."""
     leaves = []
     if isinstance(tree, dict):
         for k in sorted(tree.keys()):
@@ -38,10 +42,12 @@ def tree_flatten_with_path(
 
 
 def register_dataclass(*a: Any, **k: Any) -> None:
+    """Docstring."""
     pass
 
 
 def tree_structure(tree: Any, is_leaf: Callable = lambda x: False) -> Any:
+    """Docstring."""
     # We still need a custom structural representation for tests since zero_jax
     # doesn't export exactly what chex tests expect yet for nested PyTreeDefs.
     if is_leaf(tree):

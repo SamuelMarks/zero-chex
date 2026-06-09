@@ -1,5 +1,7 @@
 # ruff: noqa: F821, F403, F405, E402, E731, F841, E721
 
+"""Module docstring."""
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -11,6 +13,8 @@ if TYPE_CHECKING:
     JaxException = Exception
 
     class ChexifyChecks:
+        """Docstring."""
+
         user = None
 
 
@@ -24,6 +28,7 @@ import numpy as np
 
 
 def _assert_collection_of_arrays(inputs: Any) -> None:
+    """Docstring."""
     if not isinstance(inputs, collections.abc.Collection):
         raise ValueError(f"`inputs` is not a collection of arrays: {inputs}.")
 
@@ -32,6 +37,7 @@ def _unelided_shape_matches(
     actual_shape: Sequence[int],
     expected_shape: Sequence[Optional[Union[int, Set[int]]]],
 ) -> bool:
+    """Docstring."""
     if len(actual_shape) != len(expected_shape):
         return False
     for actual, expected in zip(actual_shape, expected_shape):
@@ -46,6 +52,7 @@ def _unelided_shape_matches(
 
 
 def _shape_matches(actual_shape: Sequence[int], expected_shape: Any) -> bool:
+    """Docstring."""
     expected_prefix = []
     expected_suffix = None
     for dim in expected_shape:
@@ -81,6 +88,7 @@ def _shape_matches(actual_shape: Sequence[int], expected_shape: Any) -> bool:
 
 
 def _format_shape_matcher(shape: Any) -> str:
+    """Docstring."""
     return f"({', '.join('...' if d is Ellipsis else str(d) for d in shape)})"
 
 
@@ -196,6 +204,7 @@ def assert_equal_shape(
     _assert_collection_of_arrays(inputs)
 
     def extract_relevant_dims(shape: Any, dims_to_extract: Any) -> Any:
+        """Docstring."""
         try:
             if dims_to_extract is None:
                 return shape

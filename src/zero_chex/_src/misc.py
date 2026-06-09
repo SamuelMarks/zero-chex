@@ -1,5 +1,7 @@
 # ruff: noqa: F821, F403, F405, E402, E731, F841, E721
 
+"""Module docstring."""
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -11,6 +13,8 @@ if TYPE_CHECKING:
     JaxException = Exception
 
     class ChexifyChecks:
+        """Docstring."""
+
         user = None
 
 
@@ -24,7 +28,10 @@ _TRACE_COUNTER: collections.defaultdict = collections.defaultdict(int)
 
 
 class _ChexifyStorage:
+    """Docstring."""
+
     def __init__(self) -> None:
+        """Docstring."""
         self.level = 0
         self.wait_fns = []
 
@@ -52,7 +59,10 @@ _DISABLE_ASSERTIONS = False
 
 
 class _ChexifyStorage:
+    """Docstring."""
+
     def __init__(self) -> None:
+        """Docstring."""
         self.level = 0  # pragma: no cover
 
 
@@ -67,9 +77,11 @@ class FakeContext(contextlib.ExitStack):
     """Context manager for patching."""
 
     def start(self) -> None:
+        """Docstring."""
         self.__enter__()  # pragma: no cover
 
     def stop(self) -> None:
+        """Docstring."""
         self.__exit__(None, None, None)  # pragma: no cover
 
 
@@ -92,6 +104,7 @@ def assert_max_traces(
 
     @functools.wraps(fn)
     def fn_wrapped(*args: Any, **kwargs: Any) -> Any:
+        """Docstring."""
         # A simplified tracer check
         has_tracers_in_args = True
         if not _DISABLE_ASSERTIONS and _TRACE_COUNTER[fn_hash] > n:  # type: ignore
@@ -133,10 +146,12 @@ def chexify(
     async_check: "bool" = True,
     errors: "FrozenSet[type['JaxException']]" = ChexifyChecks.user,
 ) -> "Callable[..., Any]":
+    """Docstring."""
     if fn is None:
         return lambda fn_: chexify(fn_, async_check, errors)
 
     def _wait_checks() -> "NoneType":
+        """Docstring."""
         pass
 
     fn.wait_checks = _wait_checks
@@ -155,6 +170,7 @@ def create_deprecated_function_alias(fun, new_name, deprecated_alias):
 
     @functools.wraps(fun)
     def new_fun(*args: Any, **kwargs: Any) -> Any:
+        """Docstring."""
         warnings.warn(
             f"The function {deprecated_alias} is deprecated, please use {new_name} instead.",
             DeprecationWarning,
@@ -181,6 +197,7 @@ def dataclass(
     """JAX-friendly wrapper for :py:func:`dataclasses.dataclass`."""
 
     def dcls(c: Any) -> Any:
+        """Docstring."""
         c = dataclasses.dataclass(
             init=init,
             repr=repr,
@@ -233,6 +250,7 @@ def fake_jit(
 # pragma: no cover
 # pragma: no cover
 def _fake_pmap_impl(fun: Any, **kwargs: Any) -> Any:
+    """Docstring."""
     return jax.vmap(fun)  # pragma: no cover
 
 
@@ -294,6 +312,7 @@ def mappable_dataclass(cls):
 
     @functools.wraps(orig_init)
     def new_init(self: Any, *orig_args: Any, **orig_kwargs: Any) -> None:
+        """Docstring."""
         if orig_args:
             raise ValueError(
                 "Mappable dataclass constructor doesn't support positional args."
@@ -322,6 +341,7 @@ def params_product(
     """Generates a cartesian product of `params_lists`."""
 
     def generate() -> Any:
+        """Docstring."""
         for combination in itertools.product(*params_lists):
             if named:
                 name = "_".join(t[0] for t in combination)
@@ -368,6 +388,7 @@ def warn_deprecated_function(
     fun: "Callable[..., Any]" = None,
     replacement: "str | None" = None,
 ) -> "Callable[..., Any]":
+    """Docstring."""
     if fun is None:
         return functools.partial(warn_deprecated_function, replacement=replacement)
     """A decorator to mark a function definition as deprecated."""
@@ -377,6 +398,7 @@ def warn_deprecated_function(
 
     @functools.wraps(fun)
     def new_fun(*args: Any, **kwargs: Any) -> Any:
+        """Docstring."""
         warnings.warn(warning_message, DeprecationWarning, stacklevel=2)
         return fun(*args, **kwargs)
 
@@ -386,12 +408,14 @@ def warn_deprecated_function(
 # pragma: no cover
 # pragma: no cover
 def warn_only_n_pos_args_in_future(fun=None, n=1):
+    """Docstring."""
     if fun is None:
         return lambda f: warn_only_n_pos_args_in_future(f, n)
     """Warns if more than ``n`` positional arguments are passed to ``fun``."""
 
     @functools.wraps(fun)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
+        """Docstring."""
         if len(args) > n:
             warnings.warn(
                 f"only the first {n} arguments can be passed positionally",

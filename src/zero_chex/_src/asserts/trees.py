@@ -1,5 +1,7 @@
 # ruff: noqa: F821, F403, F405, E402, E731, F841, E721
 
+"""Module docstring."""
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -11,6 +13,8 @@ if TYPE_CHECKING:
     JaxException = Exception
 
     class ChexifyChecks:
+        """Docstring."""
+
         user = None
 
 
@@ -60,6 +64,7 @@ def assert_tree_has_only_ndarrays(
     errors = []
 
     def _assert_fn(path: "str", leaf: "Any") -> "NoneType":
+        """Docstring."""
         if leaf is not None:
             if not isinstance(leaf, (np.ndarray, jax.Array)):
                 errors.append(
@@ -73,6 +78,7 @@ def assert_tree_has_only_ndarrays(
 
 
 def _check_sharding(leaf: jax.Array) -> bool:
+    """Docstring."""
     try:
         sharding = getattr(leaf, "sharding", None)
         if sharding is not None:
@@ -102,6 +108,7 @@ def assert_tree_is_on_device(
     errors = []
 
     def _assert_fn(path: "str", leaf: "Any") -> "NoneType":
+        """Docstring."""
         if leaf is not None:
             if isinstance(leaf, jax.Array):  # pragma: no cover
                 if _check_sharding(leaf) and not hasattr(leaf, "addressable_shards"):
@@ -144,6 +151,7 @@ def assert_tree_is_on_host(
     errors = []
 
     def _assert_fn(path: "str", leaf: "Any") -> "NoneType":
+        """Docstring."""
         if leaf is not None:
             if not isinstance(leaf, np.ndarray):
                 if isinstance(leaf, jax.Array):  # pragma: no cover
@@ -199,6 +207,7 @@ def assert_tree_is_sharded(
     devices_tuple = tuple(devices)
 
     def _assert_fn(path: "str", leaf: "Any") -> "NoneType":
+        """Docstring."""
         if leaf is not None:
             if isinstance(leaf, jax.Array):  # pragma: no cover
                 if hasattr(leaf, "addressable_shards"):
@@ -230,6 +239,7 @@ def assert_tree_no_nones(
     has_nones = False
 
     def _is_leaf(value: Any) -> bool:
+        """Docstring."""
         if value is None:
             nonlocal has_nones
             has_nones = True
@@ -253,6 +263,7 @@ def assert_tree_shape_prefix(
     errors = []
 
     def _assert_fn(path: "str", leaf: "Any") -> "NoneType":
+        """Docstring."""
         if len(shape_prefix_tuple) > len(leaf.shape):
             errors.append(
                 f"Tree leaf '{path}' has a shape of length {leaf.ndim} (shape={leaf.shape}) "
@@ -287,6 +298,7 @@ def assert_tree_shape_suffix(
     errors = []
 
     def _assert_fn(path: "str", leaf: "Any") -> "NoneType":
+        """Docstring."""
         if len(shape_suffix_tuple) > len(leaf.shape):
             errors.append(
                 f"Tree leaf '{path}' has a shape of length {len(leaf.shape)} "
@@ -377,6 +389,7 @@ def assert_trees_all_close(
     """Checks that all trees have leaves with approximately equal values."""
 
     def assert_fn(arr_1: Any, arr_2: Any) -> None:
+        """Docstring."""
         if not jax.numpy.allclose(
             np.asarray(arr_1),
             np.asarray(arr_2),
@@ -388,6 +401,7 @@ def assert_trees_all_close(
             )
 
     def cmp_fn(arr_1: Any, arr_2: Any) -> bool:
+        """Docstring."""
         try:
             assert_fn(arr_1, arr_2)
         except AssertionError:
@@ -395,6 +409,7 @@ def assert_trees_all_close(
         return True
 
     def err_msg_fn(arr_1: Any, arr_2: Any) -> str:
+        """Docstring."""
         try:
             assert_fn(arr_1, arr_2)
         except AssertionError as e:
@@ -418,11 +433,13 @@ def assert_trees_all_close_ulp(
     """Checks that tree leaves differ by at most `maxulp` Units in the Last Place."""
 
     def assert_fn(arr_1: Any, arr_2: Any) -> None:
+        """Docstring."""
         np.testing.assert_array_max_ulp(
             np.asarray(arr_1), np.asarray(arr_2), maxulp=maxulp
         )
 
     def cmp_fn(arr_1: Any, arr_2: Any) -> bool:
+        """Docstring."""
         try:
             assert_fn(arr_1, arr_2)
         except AssertionError:
@@ -430,6 +447,7 @@ def assert_trees_all_close_ulp(
         return True
 
     def err_msg_fn(arr_1: Any, arr_2: Any) -> str:
+        """Docstring."""
         try:
             assert_fn(arr_1, arr_2)
         except AssertionError as e:
@@ -453,6 +471,7 @@ def assert_trees_all_equal(
     """Checks that all trees have leaves with *exactly* equal values."""
 
     def assert_fn(arr_1: Any, arr_2: Any) -> None:
+        """Docstring."""
         if not jax.numpy.array_equal(
             np.asarray(arr_1),
             np.asarray(arr_2),
@@ -462,6 +481,7 @@ def assert_trees_all_equal(
             )
 
     def cmp_fn(arr_1: Any, arr_2: Any) -> bool:
+        """Docstring."""
         try:
             assert_fn(arr_1, arr_2)
         except AssertionError:
@@ -469,6 +489,7 @@ def assert_trees_all_equal(
         return True
 
     def err_msg_fn(arr_1: Any, arr_2: Any) -> str:
+        """Docstring."""
         try:
             assert_fn(arr_1, arr_2)
         except AssertionError as e:
@@ -490,6 +511,7 @@ def assert_trees_all_equal_dtypes(
     """Checks that trees' leaves have the same dtype."""
 
     def cmp_fn(arr_1: Any, arr_2: Any) -> bool:
+        """Docstring."""
         return (
             hasattr(arr_1, "dtype")
             and hasattr(arr_2, "dtype")
@@ -497,6 +519,7 @@ def assert_trees_all_equal_dtypes(
         )
 
     def err_msg_fn(arr_1: Any, arr_2: Any) -> str:
+        """Docstring."""
         if not hasattr(arr_1, "dtype"):
             return f"{type(arr_1)} is not a (j-)np array (has no `dtype` property)"
         if not hasattr(arr_2, "dtype"):

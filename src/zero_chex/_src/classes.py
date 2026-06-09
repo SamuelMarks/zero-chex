@@ -1,5 +1,7 @@
 # ruff: noqa: F821, F403, F405, E402, E731, F841, E721
 
+"""Module docstring."""
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -9,6 +11,8 @@ if TYPE_CHECKING:
     JaxException = Exception
 
     class ChexifyChecks:
+        """Docstring."""
+
         user = None
 
 
@@ -41,13 +45,16 @@ class ChexVariantType:
     )()
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Docstring."""
         pass  # pragma: no cover
 
     def __str__(self) -> str:
+        """Docstring."""
         return "_" + self.name.lower()  # pragma: no cover
 
 
 def _optional_int(size: Optional[int]) -> Optional[int]:
+    """Docstring."""
     if size is None:
         return None
     return int(size)
@@ -57,6 +64,7 @@ class Dimensions:
     """A lightweight utility that maps strings to shape tuples."""
 
     def __init__(self, **dim_sizes) -> None:
+        """Docstring."""
         for dim, size in dim_sizes.items():
             self._setdim(dim, size)
 
@@ -71,6 +79,7 @@ class Dimensions:
         return math.prod(shape)  # type: ignore
 
     def __getitem__(self, key: str) -> Tuple[Optional[int], ...]:
+        """Docstring."""
         self._validate_key(key)
         shape = []
         open_parentheses = False
@@ -100,6 +109,7 @@ class Dimensions:
         return tuple(shape)
 
     def __setitem__(self, key: str, value: Collection[Optional[int]]) -> None:
+        """Docstring."""
         self._validate_key(key)
         self._validate_value(value)
         if len(key) != len(value):
@@ -111,18 +121,22 @@ class Dimensions:
             self._setdim(dim, size)
 
     def __delitem__(self, key: str) -> None:
+        """Docstring."""
         self._validate_key(key)
         for dim in key:
             self._deldim(dim)
 
     def __repr__(self) -> str:
+        """Docstring."""
         args = ", ".join(f"{k}={v}" for k, v in sorted(self._asdict().items()))
         return f"{type(self).__name__}({args})"
 
     def _asdict(self) -> Dict[str, Optional[int]]:
+        """Docstring."""
         return {k: v for k, v in self.__dict__.items() if re.fullmatch(r"[a-zA-Z]", k)}
 
     def _getdim(self, dim: str) -> Optional[int]:
+        """Docstring."""
         if dim == "*":
             return None
         if re.fullmatch(r"[0-9]", dim):
@@ -133,12 +147,14 @@ class Dimensions:
             raise KeyError(dim) from e
 
     def _setdim(self, dim: str, size: Optional[int]) -> None:
+        """Docstring."""
         if dim == "_":  # Skip.
             return
         self._validate_dim(dim)
         setattr(self, dim, _optional_int(size))
 
     def _deldim(self, dim: str) -> None:
+        """Docstring."""
         if dim == "_":  # Skip.
             return
         self._validate_dim(dim)
@@ -148,10 +164,12 @@ class Dimensions:
             raise KeyError(dim) from e
 
     def _validate_key(self, key: Any) -> None:
+        """Docstring."""
         if not isinstance(key, str):
             raise TypeError(f"key must be a string; got: {type(key).__name__}")
 
     def _validate_value(self, value: Any) -> None:
+        """Docstring."""
         if not isinstance(value, Sized):
             raise TypeError(
                 "value must be sized, i.e. an object with a well-defined len(value); "
@@ -159,6 +177,7 @@ class Dimensions:
             )
 
     def _validate_dim(self, dim: Any) -> None:
+        """Docstring."""
         if not isinstance(dim, str):
             raise TypeError(
                 f"dimension name must be a string; got: {type(dim).__name__}"

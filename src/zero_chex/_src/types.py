@@ -1,5 +1,7 @@
 # ruff: noqa: F821, F403, F405, E402, E731, F841, E721
 
+"""Module docstring."""
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -10,6 +12,8 @@ if TYPE_CHECKING:
     JaxException = Exception
 
     class ChexifyChecks:
+        """Docstring."""
+
         user = None
 
 

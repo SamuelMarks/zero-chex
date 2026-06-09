@@ -1,26 +1,31 @@
+[build-system]
+requires = ["hatchling", "hatch-requirements-txt"]
+build-backend = "hatchling.build"
+
 [project]
 name = "zero_chex"
 version = "0.1.90"
 description = "A compliance-focused implementation of chex"
 requires-python = ">=3.9"
-dependencies = [
-    "zero_jax",
-    "numpy",
-]
+dynamic = ["dependencies"]
 
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.metadata.hooks.requirements_txt]
+files = ["requirements.txt"]
 
 [project.optional-dependencies]
 dev = [
     "pytest",
     "pytest-cov",
     "mypy",
+    "pre-commit",
+    "interrogate"
 ]
 
 [tool.pytest.ini_options]
-addopts = "--cov=zero_chex --cov-report=term-missing --cov-fail-under=100"
+addopts = "--cov=src --cov-report=term-missing --cov-fail-under=100"
 testpaths = ["tests"]
 
 [tool.hatch.build.targets.sdist]

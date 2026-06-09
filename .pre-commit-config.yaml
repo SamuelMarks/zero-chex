@@ -1,0 +1,32 @@
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-format
+        name: Ruff Format
+        entry: ruff format .
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      - id: ruff-check
+        name: Ruff Check (Fix)
+        entry: ruff check --fix .
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      - id: pytest-coverage
+        name: Run Pytest Coverage
+        entry: env PYTHONPATH=src pytest --cov=src --cov-report=term-missing
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      - id: update-badges
+        name: Update Coverage Shields
+        entry: python3 scripts/update_badges.py
+        language: system
+        types: [python]
+        pass_filenames: false
+
+        pass_filenames: false

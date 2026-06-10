@@ -1,23 +1,31 @@
-import numpy as np
+"""Module docstring."""
+
+import ml_switcheroo.ops as jnp
+import math
 
 
 def _get_shape(x):
-    return getattr(x, "shape", np.array(x).shape)
+    """Docstring."""
+    return getattr(x, "shape", jnp.array(x).shape)
 
 
 def _get_rank(x):
+    """Docstring."""
     return len(_get_shape(x))
 
 
 def _get_size(x):
-    return np.prod(_get_shape(x))
+    """Docstring."""
+    return math.prod(_get_shape(x))
 
 
 def _get_type(x):
+    """Docstring."""
     return getattr(x, "dtype", type(x))
 
 
 def assert_axis_dimension(x, axis, expected):
+    """Docstring."""
     shape = _get_shape(x)
     if axis >= len(shape) or axis < -len(shape):
         raise AssertionError()
@@ -26,6 +34,7 @@ def assert_axis_dimension(x, axis, expected):
 
 
 def assert_axis_dimension_comparator(x, axis, comparator, custom_message=""):
+    """Docstring."""
     shape = _get_shape(x)
     if axis >= len(shape) or axis < -len(shape):
         raise AssertionError()
@@ -34,6 +43,7 @@ def assert_axis_dimension_comparator(x, axis, comparator, custom_message=""):
 
 
 def assert_axis_dimension_gt(x, axis, expected):
+    """Docstring."""
     shape = _get_shape(x)
     if axis >= len(shape) or axis < -len(shape):
         raise AssertionError()
@@ -42,6 +52,7 @@ def assert_axis_dimension_gt(x, axis, expected):
 
 
 def assert_axis_dimension_gteq(x, axis, expected):
+    """Docstring."""
     shape = _get_shape(x)
     if axis >= len(shape) or axis < -len(shape):
         raise AssertionError()
@@ -50,6 +61,7 @@ def assert_axis_dimension_gteq(x, axis, expected):
 
 
 def assert_axis_dimension_lt(x, axis, expected):
+    """Docstring."""
     shape = _get_shape(x)
     if axis >= len(shape) or axis < -len(shape):
         raise AssertionError()
@@ -58,6 +70,7 @@ def assert_axis_dimension_lt(x, axis, expected):
 
 
 def assert_axis_dimension_lteq(x, axis, expected):
+    """Docstring."""
     shape = _get_shape(x)
     if axis >= len(shape) or axis < -len(shape):
         raise AssertionError()
@@ -66,6 +79,7 @@ def assert_axis_dimension_lteq(x, axis, expected):
 
 
 def assert_equal_rank(tensors):
+    """Docstring."""
     if not isinstance(tensors, (list, tuple)):
         raise ValueError()
     if not tensors:
@@ -77,6 +91,7 @@ def assert_equal_rank(tensors):
 
 
 def assert_equal_shape(tensors, dims=None):
+    """Docstring."""
     if not isinstance(tensors, (list, tuple)):
         raise ValueError()
     if not tensors:
@@ -103,6 +118,7 @@ def assert_equal_shape(tensors, dims=None):
 
 
 def assert_equal_shape_prefix(tensors, prefix_len):
+    """Docstring."""
     if not isinstance(tensors, (list, tuple)):
         raise ValueError()
     if not tensors:
@@ -114,6 +130,7 @@ def assert_equal_shape_prefix(tensors, prefix_len):
 
 
 def assert_equal_shape_suffix(tensors, suffix_len):
+    """Docstring."""
     if not isinstance(tensors, (list, tuple)):
         raise ValueError()
     if not tensors:
@@ -127,6 +144,7 @@ def assert_equal_shape_suffix(tensors, suffix_len):
 
 
 def assert_equal_size(tensors):
+    """Docstring."""
     if not isinstance(tensors, (list, tuple)):
         raise ValueError()
     if not tensors:
@@ -138,6 +156,7 @@ def assert_equal_size(tensors):
 
 
 def assert_rank(x, expected):
+    """Docstring."""
     r = _get_rank(x)
     if isinstance(expected, int):
         expected = {expected}
@@ -148,6 +167,7 @@ def assert_rank(x, expected):
 
 
 def assert_shape(x, expected):
+    """Docstring."""
     s = _get_shape(x)
     if expected == ():
         if s != ():
@@ -169,6 +189,7 @@ def assert_shape(x, expected):
 
 
 def assert_size(x, expected):
+    """Docstring."""
     s = _get_size(x)
     if isinstance(expected, int):
         expected = {expected}
@@ -190,6 +211,7 @@ def assert_size(x, expected):
 
 
 def assert_type(x, expected):
+    """Docstring."""
     t = _get_type(x)
     if isinstance(x, (int, float)):
         if type(x) is not expected:

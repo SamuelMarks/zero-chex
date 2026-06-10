@@ -2,7 +2,8 @@
 """Tests for type aliases."""
 
 import zero_jax as jax
-import numpy as np
+from ml_switcheroo.core.tensor import Tensor
+
 
 from zero_chex import (
     ArrayBatched,
@@ -27,7 +28,7 @@ def test_array_device() -> None:
 
 def test_array_numpy() -> None:
     """Test ArrayNumpy."""
-    assert ArrayNumpy is np.ndarray
+    assert ArrayNumpy is Tensor
 
 
 def test_array_sharded() -> None:

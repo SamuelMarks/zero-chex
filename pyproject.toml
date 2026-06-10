@@ -37,5 +37,5 @@ addopts = "--cov=src --cov-fail-under=50"
 
 
 
-dynamic = ["dependencies"]
-dependencies = ["ml-switcheroo-compiler", "zero-jax"]
+
+

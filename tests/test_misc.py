@@ -2,7 +2,7 @@
 
 import pytest
 import zero_jax as jax
-import zero_jax.numpy as jnp
+import ml_switcheroo.ops as jnp
 
 from zero_chex import (
     block_until_chexify_assertions_complete,
@@ -30,9 +30,9 @@ def test_assert_max_traces():
 
 def test_assert_numerical_grads():
     def f(x):
-        return x**2  # pragma: no cover
+        return x**2
 
-    # m()
+    f(1)
 
 
 def test_chexify():
@@ -130,10 +130,10 @@ def test_restrict_backends():
         pass
     with pytest.raises(ValueError):
         with restrict_backends():
-            pass  # pragma: no cover
+            pass
     with pytest.raises(ValueError):
         with restrict_backends(allowed=["cpu"], forbidden=["cpu"]):
-            pass  # pragma: no cover
+            pass
 
 
 def test_set_n_cpu_devices():
@@ -164,3 +164,18 @@ def test_warn_only_n_pos_args_in_future():
     assert f(1) == 3
     with pytest.warns(DeprecationWarning):
         assert f(1, 2) == 3
+
+
+def test_misc_coverage():
+    from zero_chex import warn_only_n_pos_args_in_future, get_err_regex
+
+    def dummy_fn():
+        pass
+
+    wrapper = warn_only_n_pos_args_in_future(dummy_fn)
+    import warnings
+
+    with warnings.catch_warnings(record=True):
+        wrapper()
+
+    assert get_err_regex("test") == "test"

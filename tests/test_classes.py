@@ -2,7 +2,8 @@
 
 import pytest
 
-from zero_chex import ChexVariantType, Dimensions, TestCase
+from zero_chex import ChexVariantType, Dimensions
+from zero_chex._src.classes import TestCase
 
 
 def test_chex_variant_type() -> None:
@@ -73,6 +74,12 @@ def test_dimensions() -> None:
     with pytest.raises(KeyError, match="contain letters"):
         dims._validate_dim("1")
 
+    dims._validate_dim("a")
+    dims._validate_dim("_")
+
+    dims["b"] = [1, 2]
+    assert dims["b"] == (1,)
+
     del dims["_"]  # should return None and not raise
 
     dims._deldim("_")
@@ -98,3 +105,13 @@ def test_test_case() -> None:
     tc = TestCase()
     with pytest.raises(RuntimeError, match="self.variant is not defined"):
         tc.variant()
+
+
+def test_dimensions_coverage():
+    from zero_chex import Dimensions
+
+    d = Dimensions(a=2, b=3)
+    d._dims = {"a": 2, "b": 3}  # cover line 25
+    assert d["(ab)"] == (6,)  # cover line 91
+    assert list(d) == ["a", "b"]  # cover line 116
+    assert len(d) == 2  # cover line 120

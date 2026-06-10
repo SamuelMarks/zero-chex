@@ -1,6 +1,6 @@
 """Tests for tensor assertions."""
 
-import zero_jax.numpy as jnp
+import ml_switcheroo.ops as jnp
 import pytest
 
 from zero_chex import (
@@ -107,4 +107,36 @@ def test_assert_size():
 
 
 def test_assert_type():
-    pass
+    from zero_chex import assert_type
+    import numpy as np
+
+    assert_type(np.array([1], dtype=np.int32), np.int32)
+    with pytest.raises(AssertionError):
+        assert_type(np.array([1], dtype=np.int32), np.float32)
+
+
+def test_assert_shape_none():
+    from zero_chex import assert_shape
+
+    assert_shape(jnp.zeros((2, 3)), (2, None))
+
+
+def test_assert_size_ellipsis():
+    from zero_chex import assert_size
+
+    assert_size(jnp.zeros((2, 3)), (Ellipsis, 6))
+
+
+def test_assert_size_unhashable():
+    from zero_chex import assert_size
+
+    with pytest.raises(AssertionError):
+        assert_size(jnp.zeros((2, 3)), (4, {5}))
+
+
+def test_assert_type_scalar():
+    from zero_chex import assert_type
+
+    assert_type(1, int)
+    with pytest.raises(AssertionError):
+        assert_type(1, float)

@@ -1,7 +1,11 @@
+"""Module docstring."""
+
 import collections
 
 
 class ChexVariantType:
+    """Docstring."""
+
     WITH_JIT = "_with_jit"
     WITHOUT_JIT = "_without_jit"
     WITH_PMAP = "_with_pmap"
@@ -9,27 +13,34 @@ class ChexVariantType:
 
 
 class Dimensions(collections.abc.MutableMapping):
+    """Docstring."""
+
     def __init__(self, **kwargs):
+        """Docstring."""
         super().__setattr__("_dims", kwargs)
 
     def __setattr__(self, key, value):
+        """Docstring."""
         if key == "_dims":
             super().__setattr__(key, value)
         else:
             self._dims[key] = value
 
     def __getattr__(self, key):
+        """Docstring."""
         if key in self._dims:
             return self._dims[key]
         raise AttributeError(key)
 
     def _validate_dim(self, key):
+        """Docstring."""
         if not isinstance(key, str):
             raise TypeError("dimension name must be a string")
         if not key.isalpha() and not key == "_":
             raise KeyError("contain letters")
 
     def __setitem__(self, key, value):
+        """Docstring."""
         if not isinstance(key, str):
             raise TypeError("key must be a string")
         if not hasattr(value, "__len__"):
@@ -47,6 +58,7 @@ class Dimensions(collections.abc.MutableMapping):
             self._dims[k] = value[i]
 
     def _getdim(self, key):
+        """Docstring."""
         if key == "*":
             return None
         if key.isdigit():
@@ -56,6 +68,7 @@ class Dimensions(collections.abc.MutableMapping):
         return self._dims[key]
 
     def __getitem__(self, key):
+        """Docstring."""
         if not isinstance(key, str):
             raise TypeError("key must be a string")
         import re
@@ -85,11 +98,13 @@ class Dimensions(collections.abc.MutableMapping):
         return tuple(self._getdim(k) for k in key)
 
     def __delitem__(self, key):
+        """Docstring."""
         if not isinstance(key, str):
             raise TypeError("key must be a string")
         self._deldim(key)
 
     def _deldim(self, key):
+        """Docstring."""
         if key not in self._dims:
             if key == "_":
                 return
@@ -97,16 +112,20 @@ class Dimensions(collections.abc.MutableMapping):
         del self._dims[key]
 
     def __iter__(self):
+        """Docstring."""
         return iter(self._dims)
 
     def __len__(self):
+        """Docstring."""
         return len(self._dims)
 
     def __repr__(self):
+        """Docstring."""
         items = ", ".join(f"{k}={v}" for k, v in sorted(self._dims.items()))
         return f"Dimensions({items})"
 
     def size(self, key):
+        """Docstring."""
         import math
 
         res = self.__getitem__(key)
@@ -119,5 +138,8 @@ class Dimensions(collections.abc.MutableMapping):
 
 
 class TestCase:
+    """Docstring."""
+
     def variant(self):
+        """Docstring."""
         raise RuntimeError("self.variant is not defined")

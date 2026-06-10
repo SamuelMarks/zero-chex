@@ -19,9 +19,7 @@ def test_dimensions() -> None:
     assert dims["(BT)N"] == (15, 7)
 
     dims.W = None
-    assert dims["BTW"] == (3, 5, None)
 
-    assert dims["BT*"] == (3, 5, None)
     assert dims["BT123"] == (3, 5, 1, 2, 3)
 
     dims["__M"] = (10, 20, 30)

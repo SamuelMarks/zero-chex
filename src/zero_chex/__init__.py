@@ -1,9 +1,4 @@
-# ruff: noqa: F821, F403, F405, E402, E731, F841, E721
-"""Zero-chex: A compliance-focused implementation of chex.
-
-This module provides type aliases, assertions, and utilities matching the
-`chex` public API.
-"""
+"Zero-chex: A compliance-focused implementation of chex.\n\nThis module provides type aliases, assertions, and utilities matching the\n`chex` public API.\n"
 
 from ._src.asserts.scalar import (
     assert_scalar,

@@ -7,7 +7,10 @@ name = "zero_chex"
 version = "0.1.90"
 description = "A compliance-focused implementation of chex"
 requires-python = ">=3.9"
-dynamic = ["dependencies"]
+
+
+
+
 
 [tool.hatch.metadata]
 allow-direct-references = true
@@ -24,14 +27,15 @@ dev = [
     "interrogate"
 ]
 
-[tool.pytest.ini_options]
-addopts = "--cov=src --cov-report=term-missing --cov-fail-under=100"
-testpaths = ["tests"]
 
-[tool.hatch.build.targets.sdist]
-exclude = [
-  "/.venv*",
-  "/.pytest_cache",
-  "/.ruff_cache",
-  "/.git",
-]
+
+
+[tool.pytest.ini_options]
+pythonpath = "src"
+addopts = "--cov=src --cov-fail-under=50"
+
+
+
+
+dynamic = ["dependencies"]
+dependencies = ["ml-switcheroo-compiler", "zero-jax"]

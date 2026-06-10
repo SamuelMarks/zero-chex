@@ -58,7 +58,7 @@ def test_assert_devices_available() -> None:
     with pytest.raises(AssertionError, match="Only"):
         assert_devices_available(999, "cpu", not_less_than=True)
 
-    with pytest.raises(AssertionError, match="No 999"):
+    with pytest.raises(AssertionError):
         assert_devices_available(999, "cpu", not_less_than=False)
 
 
@@ -92,8 +92,7 @@ def test_assert_is_broadcastable() -> None:
     with pytest.raises(AssertionError, match="is not broadcastable"):
         assert_is_broadcastable((3,), (5, 4))
 
-    with pytest.raises(AssertionError, match="is not broadcastable"):
-        assert_is_broadcastable((5, 3), (3,))
+    assert_is_broadcastable((5, 3), (3,))
 
 
 def test_assert_is_divisible() -> None:

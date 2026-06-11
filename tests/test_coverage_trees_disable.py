@@ -38,7 +38,7 @@ def test_trees_disable_asserts():
     fail(chex.assert_trees_all_equal, t1, {"a": np.add(x, np.ones((2, 3)))})
 
     # 146
-    fail(chex.assert_tree_all_finite, {"a": np.array([float("inf")])})
+    fail(chex.assert_tree_all_finite, {"a": float("inf")})
 
     # 180, 184
     fail(chex.assert_tree_has_only_ndarrays, {"a": "string"})

@@ -122,7 +122,9 @@ def assert_trees_all_equal(tree1, tree2, strict=False):
         AssertionError: If any corresponding leaves are not exactly equal.
     """
     for l1, l2 in zip(_get_leaves(tree1), _get_leaves(tree2)):
-        if not jnp.array_equal(l1, l2):
+        v1 = l1.data if hasattr(l1, "data") else l1
+        v2 = l2.data if hasattr(l2, "data") else l2
+        if not __import__("numpy").array_equal(v1, v2):
             raise AssertionError()
 
 
@@ -139,8 +141,14 @@ def assert_tree_all_finite(tree):
         AssertionError: If any leaf contains non-finite values.
     """
     for leaf in _get_leaves(tree):
-        if not jnp.all(jnp.isfinite(leaf)):
-            raise AssertionError()
+        import math
+
+        try:
+            if not jnp.all(jnp.isfinite(leaf)):
+                raise AssertionError()
+        except (TypeError, ValueError, AttributeError):
+            if not math.isfinite(leaf):
+                raise AssertionError()
 
 
 def assert_tree_has_only_ndarrays(tree):
@@ -214,7 +222,13 @@ def assert_tree_shape_prefix(tree, prefix):
         AssertionError: If any leaf's shape does not start with the prefix.
     """
     for leaf in _get_leaves(tree):
-        s = getattr(leaf, "shape", jnp.array(leaf).shape)
+        s = (
+            leaf.shape
+            if hasattr(leaf, "shape")
+            else (len(leaf),)
+            if isinstance(leaf, (list, tuple))
+            else ()
+        )
         if s[: len(prefix)] != tuple(prefix):
             raise AssertionError()
 
@@ -233,7 +247,13 @@ def assert_tree_shape_suffix(tree, suffix):
         AssertionError: If any leaf's shape does not end with the suffix.
     """
     for leaf in _get_leaves(tree):
-        s = getattr(leaf, "shape", jnp.array(leaf).shape)
+        s = (
+            leaf.shape
+            if hasattr(leaf, "shape")
+            else (len(leaf),)
+            if isinstance(leaf, (list, tuple))
+            else ()
+        )
         if len(suffix) > 0 and s[-len(suffix) :] != tuple(suffix):
             raise AssertionError()
 

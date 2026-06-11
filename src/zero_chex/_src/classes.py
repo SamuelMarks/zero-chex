@@ -260,3 +260,107 @@ class TestCase:
             RuntimeError: Always raised if not overridden by a subclass or decorator.
         """
         raise RuntimeError("self.variant is not defined")
+
+
+def variants(
+    test_method=None,
+    with_jit: bool = False,
+    without_jit: bool = False,
+    with_device: bool = False,
+    without_device: bool = False,
+    with_pmap: bool = False,
+):
+    """Decorates a test to expose Chex variants.
+
+    Args:
+        test_method: The method to decorate.
+        with_jit: Whether to include a JIT variant.
+        without_jit: Whether to include a non-JIT variant.
+        with_device: Whether to include a device variant.
+        without_device: Whether to include a non-device variant.
+        with_pmap: Whether to include a PMAP variant.
+
+    Returns:
+        The decorated test method.
+    """
+
+    def decorator(fn):
+        """Decorator that returns the wrapper.
+
+        Args:
+            fn: The function to decorate.
+
+        Returns:
+            The wrapped function.
+        """
+        import functools
+
+        @functools.wraps(fn)
+        def wrapper(self, *args, **kwargs):
+            """Wrapper for the variant test method.
+
+            Args:
+                self: The test case instance.
+                *args: Positional arguments for the test method.
+                **kwargs: Keyword arguments for the test method.
+
+            Returns:
+                The result of the test method.
+            """
+
+            def variant_decorator(f):
+                """A dummy decorator that returns the function unchanged.
+
+                Args:
+                    f: The function to decorate.
+
+                Returns:
+                    The unmodified function.
+                """
+                return f
+
+            variant_decorator.type = ChexVariantType.WITHOUT_JIT
+            original_variant = getattr(self, "variant", None)
+            self.variant = variant_decorator
+            try:
+                return fn(self, *args, **kwargs)
+            finally:
+                if original_variant is not None:
+                    self.variant = original_variant
+
+        return wrapper
+
+    if test_method is not None:
+        return decorator(test_method)
+    return decorator
+
+
+def all_variants(
+    test_method=None,
+    with_jit: bool = True,
+    without_jit: bool = True,
+    with_device: bool = True,
+    without_device: bool = True,
+    with_pmap: bool = True,
+):
+    """Equivalent to ``chex.variants`` but with flipped defaults.
+
+    Args:
+        test_method: The method to decorate.
+        with_jit: Whether to include a JIT variant.
+        without_jit: Whether to include a non-JIT variant.
+        with_device: Whether to include a device variant.
+        without_device: Whether to include a non-device variant.
+        with_pmap: Whether to include a PMAP variant.
+
+    Returns:
+        The decorated test method.
+    """
+    return variants(
+        test_method,
+        with_jit=with_jit,
+        without_jit=without_jit,
+        with_device=with_device,
+        without_device=without_device,
+        with_pmap=with_pmap,
+    )

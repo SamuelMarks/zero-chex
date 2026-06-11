@@ -1,19 +1,16 @@
 """Tensor assertions."""
 
-import ml_switcheroo.ops as jnp
 import math
 
 
 def _get_shape(x):
-    """Gets the shape of an array-like object.
-
-    Args:
-        x: The array-like object.
-
-    Returns:
-        The shape tuple of the object.
-    """
-    return getattr(x, "shape", jnp.array(x).shape)
+    if hasattr(x, "shape"):
+        return x.shape
+    if isinstance(x, (list, tuple)):
+        if not x:
+            return (0,)
+        return (len(x),) + _get_shape(x[0])
+    return ()
 
 
 def _get_rank(x):

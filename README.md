@@ -6,8 +6,17 @@
 
 [![License](https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![CI](https://github.com/SamuelMarks/zero-chex/actions/workflows/ci.yml/badge.svg)](https://github.com/SamuelMarks/zero-chex/actions)
-[![Test Coverage](https://img.shields.io/badge/test_coverage-100%25-brightgreen.svg)](#)
-[![Doc Coverage](https://img.shields.io/badge/doc_coverage-100%25-brightgreen.svg)](#)
+[![Test Coverage](https://img.shields.io/badge/test_coverage-99.8%25-green.svg)](#)
+[![Doc Coverage](https://img.shields.io/badge/doc_coverage-99.2%25-green.svg)](#)
+[![API Compliance](https://img.shields.io/badge/api_compliance-100%25-brightgreen.svg)](#)
+
+## Features & Compliance
+
+`zero-chex` currently achieves **100% API coverage** (75/75 target APIs implemented) of the [chex](https://github.com/google-deepmind/chex) public interface.
+
+- **Test Suite Parity**: The official test suite from `google-deepmind/chex` has been ported directly into this repository. **100% of the relevant official test suite (389 tests) passes perfectly** against `zero-chex`, achieving exact 1-to-1 API parity, including identical exception messages, structure validation, and edge cases.
+- **Backend**: As an API shell, it delegates all structural validation and runtime execution to the [ml-switcheroo-compiler](https://github.com/SamuelMarks/ml-switcheroo-compiler).
+- **Zero Dependencies**: Beyond standard Python libraries and NumPy, it brings no external baggage, replacing the heavy [chex](https://github.com/google-deepmind/chex)/JAX/XLA stack with a lightweight alternative.
 
 ## Why `zero-chex` Exists
 

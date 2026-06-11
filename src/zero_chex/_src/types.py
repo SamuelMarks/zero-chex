@@ -3,7 +3,7 @@
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    import jax
+    import zero_jax as jax
     from typing import Any
 
     NoneType = type(None)
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
         user = None
 
 
-from typing import Any, Sequence, Set, Union
+from typing import Any, Iterable, Mapping, Sequence, Set, Union
 import zero_jax as jax
 import ml_switcheroo
 
@@ -30,8 +30,20 @@ ArraySharded = jax.Array
 Device = Any
 PRNGKey = Any
 PyTreeDef = jax.tree_util.PyTreeDef
+
 Array = Union[jax.Array, ml_switcheroo.core.tensor.Tensor, bool, int, float]
 Scalar = Union[float, int]
 ArrayDType = Union[str, type[Any], ml_switcheroo.core.dtype.DType, Any]
+Numeric = Union[Array, Scalar]
+Shape = Sequence[Union[int, Any]]
+
+ArrayTree = Union[Array, Iterable["ArrayTree"], Mapping[Any, "ArrayTree"]]
+ArrayDeviceTree = Union[
+    ArrayDevice, Iterable["ArrayDeviceTree"], Mapping[Any, "ArrayDeviceTree"]
+]
+ArrayNumpyTree = Union[
+    ArrayNumpy, Iterable["ArrayNumpyTree"], Mapping[Any, "ArrayNumpyTree"]
+]
+
 TDimMatcher = Union[int, Set[int], type(Ellipsis), type(None)]
 TShapeMatcher = Sequence[TDimMatcher]

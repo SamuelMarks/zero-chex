@@ -168,3 +168,74 @@ def test_mappable_dataclass_getitem_len():
     obj = MyMap(x=1)
     assert obj["x"] == 1
     assert len(obj) == 1
+
+
+def test_warn_keyword_args_only_in_future():
+    import zero_chex as chex
+    import warnings
+
+    @chex.warn_keyword_args_only_in_future
+    def foo(a, b):
+        return a + b
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        assert foo(1, 2) == 3
+        assert len(w) == 1
+        assert issubclass(w[-1].category, DeprecationWarning)
+
+    @chex.warn_keyword_args_only_in_future()
+    def bar(a, b):
+        return a + b
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        assert bar(1, 2) == 3
+        assert len(w) == 1
+        assert issubclass(w[-1].category, DeprecationWarning)
+
+
+def test_register_dataclass_type_with_jax_tree_util():
+    import zero_chex as chex
+    from dataclasses import dataclass
+    import zero_jax
+
+    @dataclass
+    class DummyData:
+        a: int
+        b: int
+
+    old_register = getattr(zero_jax.tree_util, "register_pytree_node", None)
+
+    def fake_register(cls, flatten, unflatten):
+        flat, aux = flatten(DummyData(1, 2))
+        obj = unflatten(aux, flat)
+        assert obj.a == 1
+
+    zero_jax.tree_util.register_pytree_node = fake_register
+    chex.register_dataclass_type_with_jax_tree_util(DummyData)
+
+    if old_register is not None:
+        zero_jax.tree_util.register_pytree_node = old_register
+    else:
+        del zero_jax.tree_util.register_pytree_node
+
+
+def test_chexify_checks():
+    import zero_chex as chex
+
+    assert isinstance(chex.ChexifyChecks.user, frozenset)
+    assert isinstance(chex.ChexifyChecks.float, frozenset)
+    assert chex.ChexifyChecks.nan == frozenset()
+    assert chex.ChexifyChecks.index == frozenset()
+    assert chex.ChexifyChecks.div == frozenset()
+    assert chex.ChexifyChecks.automatic == frozenset()
+    assert chex.ChexifyChecks.all == frozenset()
+
+
+def test_fake_context_start_stop():
+    from zero_chex._src.misc import FakeContext
+
+    ctx = FakeContext()
+    ctx.start()
+    ctx.stop()

@@ -61,3 +61,46 @@ def test_dimensions_missing():
 
     # repr
     assert repr(dims) == "Dimensions(x=2)"
+
+
+def test_variants():
+    import zero_chex as chex
+
+    class DummyTest(chex.TestCase):
+        @chex.variants(with_jit=True)
+        def my_test(self):
+            @self.variant
+            def f(x):
+                return x
+
+            assert f(1) == 1
+
+        @chex.all_variants(with_jit=True)
+        def my_test_all(self):
+            @self.variant
+            def f(x):
+                return x
+
+            assert f(1) == 1
+
+        @chex.variants
+        def my_test_no_args(self):
+            @self.variant
+            def f(x):
+                return x
+
+            assert f(1) == 1
+
+        @chex.all_variants
+        def my_test_all_no_args(self):
+            @self.variant
+            def f(x):
+                return x
+
+            assert f(1) == 1
+
+    test = DummyTest()
+    test.my_test()
+    test.my_test_all()
+    test.my_test_no_args()
+    test.my_test_all_no_args()

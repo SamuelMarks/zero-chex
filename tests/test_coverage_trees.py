@@ -7,7 +7,7 @@ import zero_chex as chex
 
 def test_assert_tree_all_finite_fail():
     with pytest.raises(AssertionError):
-        chex.assert_tree_all_finite({"a": np.array([float("inf")])})
+        chex.assert_tree_all_finite({"a": float("inf")})
 
 
 def test_assert_tree_has_only_ndarrays_fail():
@@ -36,12 +36,16 @@ def test_assert_tree_shape_suffix_fail():
 
 def test_assert_trees_all_close_fail():
     with pytest.raises(AssertionError):
-        chex.assert_trees_all_close({"a": np.array([1.0])}, {"a": np.array([2.0])})
+        chex.assert_trees_all_close(
+            {"a": np.ones((1,))}, {"a": np.add(np.ones((1,)), np.ones((1,)))}
+        )
 
 
 def test_assert_trees_all_equal_fail():
     with pytest.raises(AssertionError):
-        chex.assert_trees_all_equal({"a": np.array([1])}, {"a": np.array([2])})
+        chex.assert_trees_all_equal(
+            {"a": np.ones((1,))}, {"a": np.add(np.ones((1,)), np.ones((1,)))}
+        )
 
 
 def test_assert_trees_all_equal_comparator_fail():
@@ -118,3 +122,19 @@ def test_check_sharding_true():
             self.sharding.__class__.__name__ = "PmapSharding"
 
     assert chex._src.asserts.trees._check_sharding(DummyLeafSharded())
+
+
+def test_assert_tree_all_finite_pass():
+    import zero_chex as chex
+
+    chex.assert_tree_all_finite({"a": 1.0})
+
+
+def test_assert_tree_all_finite_tensor_fail_mocked(mocker):
+    import zero_chex as chex
+
+    mocker.patch("ml_switcheroo.ops.all", return_value=False)
+    import pytest
+
+    with pytest.raises(AssertionError):
+        chex.assert_tree_all_finite({"a": __import__("ml_switcheroo").ops.ones((1,))})

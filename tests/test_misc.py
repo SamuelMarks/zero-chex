@@ -89,7 +89,19 @@ def test_fake_jit_pmap():
     with fake_jit():
         pass
     with fake_pmap():
-        assert jax.pmap(lambda x: x)(jnp.array([1])) == jnp.array([1])
+        res = jax.pmap(lambda x: x)(jnp.ones((1,)))
+        expected = jnp.ones((1,))
+        res_data = (
+            res._tensor.data
+            if hasattr(res, "_tensor")
+            else (res.data if hasattr(res, "data") else res)
+        )
+        expected_data = (
+            expected._tensor.data
+            if hasattr(expected, "_tensor")
+            else (expected.data if hasattr(expected, "data") else expected)
+        )
+        assert __import__("numpy").array_equal(res_data, expected_data)
     with fake_pmap_and_jit():
         pass
 

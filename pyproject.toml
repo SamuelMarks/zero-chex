@@ -31,6 +31,20 @@ dev = [
 
 
 
+[tool.interrogate]
+ignore-init-method = true
+ignore-init-module = false
+ignore-magic = false
+ignore-semiprivate = false
+ignore-private = false
+ignore-property-decorators = false
+ignore-module = false
+ignore-nested-functions = false
+ignore-nested-classes = true
+ignore-setters = false
+fail-under = 100
+exclude = ["setup.py", "docs", "build", "tests", "scripts"]
+
 [tool.pytest.ini_options]
 pythonpath = "src"
 addopts = "--cov=src --cov-fail-under=50"

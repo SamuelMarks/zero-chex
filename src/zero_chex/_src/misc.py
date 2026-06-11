@@ -37,6 +37,11 @@ class ChexifyChecks:
 
     user = frozenset()
     float = frozenset()
+    nan = frozenset()
+    index = frozenset()
+    div = frozenset()
+    automatic = frozenset()
+    all = frozenset()
 
 
 class FakeContext(contextlib.ExitStack):
@@ -199,6 +204,45 @@ def create_deprecated_function_alias(fun, new_name, deprecated_alias):
         return fun(*args, **kwargs)
 
     return wrapper
+
+
+def register_dataclass_type_with_jax_tree_util(data_class):
+    """Registers a dataclass as a custom PyTree node with JAX.
+
+    Args:
+        data_class: The dataclass to register.
+    """
+    import zero_jax
+
+    def flatten(obj):
+        """Flattens the dataclass instance.
+
+        Args:
+            obj: The dataclass instance.
+
+        Returns:
+            A tuple of children and auxiliary data.
+        """
+        children = tuple(
+            getattr(obj, field.name) for field in __import__("dataclasses").fields(obj)
+        )
+        return children, None
+
+    def unflatten(aux_data, children):
+        """Unflattens the dataclass instance.
+
+        Args:
+            aux_data: Auxiliary data.
+            children: Flattended children.
+
+        Returns:
+            The restored dataclass instance.
+        """
+        return data_class(*children)
+
+    getattr(zero_jax.tree_util, "register_pytree_node", lambda *args: None)(
+        data_class, flatten, unflatten
+    )
 
 
 def dataclass(
@@ -510,6 +554,60 @@ def warn_only_n_pos_args_in_future(fun=None, n=1):
 
         def wrapper(f):
             """Wrapper for warn_only_n_pos_args_in_future.
+
+            Args:
+                f: The function to wrap.
+
+            Returns:
+                The wrapped function.
+            """
+
+            def inner(*args, **kwargs):
+                """Inner function that issues a DeprecationWarning.
+
+                Args:
+                    *args: Positional arguments for the original function.
+                    **kwargs: Keyword arguments for the original function.
+
+                Returns:
+                    The result of the original function.
+                """
+                warnings.warn("deprecated", DeprecationWarning)
+                return f(*args, **kwargs)
+
+            return inner
+
+        return wrapper
+
+    def inner(*args, **kwargs):
+        """Inner function that issues a DeprecationWarning.
+
+        Args:
+            *args: Positional arguments for the original function.
+            **kwargs: Keyword arguments for the original function.
+
+        Returns:
+            The result of the original function.
+        """
+        warnings.warn("deprecated", DeprecationWarning)
+        return fun(*args, **kwargs)
+
+    return inner
+
+
+def warn_keyword_args_only_in_future(fun=None):
+    """Decorator to warn about passing arguments positionally that should be keyword-only in the future.
+
+    Args:
+        fun: The function to decorate.
+
+    Returns:
+        The decorated function or a decorator.
+    """
+    if fun is None:
+
+        def wrapper(f):
+            """Wrapper for warn_keyword_args_only_in_future.
 
             Args:
                 f: The function to wrap.

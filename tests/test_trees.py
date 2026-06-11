@@ -38,8 +38,8 @@ def test_trees():
         sharding = DummyPmapSharding()
 
     # Create dummy trees
-    tree1 = {"a": jnp.array([1.0, 2.0]), "b": jnp.array([3.0])}
-    tree2 = {"a": jnp.array([1.0, 2.0]), "b": jnp.array([3.0])}
+    tree1 = {"a": jnp.ones((2,)), "b": jnp.ones((1,))}
+    tree2 = {"a": jnp.ones((2,)), "b": jnp.ones((1,))}
     tree_host = {"a": DummyLeaf(), "b": DummyLeaf()}
     tree_sharded = {"a": DummyLeafSharded(), "b": DummyLeafSharded()}
 

@@ -1,31 +1,71 @@
-"""Module docstring."""
+"""Tensor assertions."""
 
 import ml_switcheroo.ops as jnp
 import math
 
 
 def _get_shape(x):
-    """Docstring."""
+    """Gets the shape of an array-like object.
+
+    Args:
+        x: The array-like object.
+
+    Returns:
+        The shape tuple of the object.
+    """
     return getattr(x, "shape", jnp.array(x).shape)
 
 
 def _get_rank(x):
-    """Docstring."""
+    """Gets the rank (number of dimensions) of an array-like object.
+
+    Args:
+        x: The array-like object.
+
+    Returns:
+        The rank of the object as an integer.
+    """
     return len(_get_shape(x))
 
 
 def _get_size(x):
-    """Docstring."""
+    """Gets the total number of elements in an array-like object.
+
+    Args:
+        x: The array-like object.
+
+    Returns:
+        The total size of the object as an integer.
+    """
     return math.prod(_get_shape(x))
 
 
 def _get_type(x):
-    """Docstring."""
+    """Gets the data type of an array-like object.
+
+    Args:
+        x: The array-like object.
+
+    Returns:
+        The data type of the object.
+    """
     return getattr(x, "dtype", type(x))
 
 
 def assert_axis_dimension(x, axis, expected):
-    """Docstring."""
+    """Asserts that a specific axis of an array has the expected dimension.
+
+    Args:
+        x: The array-like object.
+        axis: The index of the axis to check.
+        expected: The expected dimension for the given axis.
+
+    Returns:
+        None
+
+    Raises:
+        AssertionError: If the dimension of the specified axis does not match the expected value.
+    """
     shape = _get_shape(x)
     if axis >= len(shape) or axis < -len(shape):
         raise AssertionError()
@@ -34,7 +74,20 @@ def assert_axis_dimension(x, axis, expected):
 
 
 def assert_axis_dimension_comparator(x, axis, comparator, custom_message=""):
-    """Docstring."""
+    """Asserts that a specific axis dimension satisfies a custom comparator.
+
+    Args:
+        x: The array-like object.
+        axis: The index of the axis to check.
+        comparator: A callable that takes the dimension and returns a boolean.
+        custom_message: An optional custom message for the AssertionError.
+
+    Returns:
+        None
+
+    Raises:
+        AssertionError: If the comparator returns False for the given axis dimension.
+    """
     shape = _get_shape(x)
     if axis >= len(shape) or axis < -len(shape):
         raise AssertionError()
@@ -43,7 +96,19 @@ def assert_axis_dimension_comparator(x, axis, comparator, custom_message=""):
 
 
 def assert_axis_dimension_gt(x, axis, expected):
-    """Docstring."""
+    """Asserts that a specific axis dimension is strictly greater than the expected value.
+
+    Args:
+        x: The array-like object.
+        axis: The index of the axis to check.
+        expected: The value the dimension must be strictly greater than.
+
+    Returns:
+        None
+
+    Raises:
+        AssertionError: If the axis dimension is less than or equal to expected.
+    """
     shape = _get_shape(x)
     if axis >= len(shape) or axis < -len(shape):
         raise AssertionError()
@@ -52,7 +117,19 @@ def assert_axis_dimension_gt(x, axis, expected):
 
 
 def assert_axis_dimension_gteq(x, axis, expected):
-    """Docstring."""
+    """Asserts that a specific axis dimension is greater than or equal to the expected value.
+
+    Args:
+        x: The array-like object.
+        axis: The index of the axis to check.
+        expected: The value the dimension must be greater than or equal to.
+
+    Returns:
+        None
+
+    Raises:
+        AssertionError: If the axis dimension is less than expected.
+    """
     shape = _get_shape(x)
     if axis >= len(shape) or axis < -len(shape):
         raise AssertionError()
@@ -61,7 +138,19 @@ def assert_axis_dimension_gteq(x, axis, expected):
 
 
 def assert_axis_dimension_lt(x, axis, expected):
-    """Docstring."""
+    """Asserts that a specific axis dimension is strictly less than the expected value.
+
+    Args:
+        x: The array-like object.
+        axis: The index of the axis to check.
+        expected: The value the dimension must be strictly less than.
+
+    Returns:
+        None
+
+    Raises:
+        AssertionError: If the axis dimension is greater than or equal to expected.
+    """
     shape = _get_shape(x)
     if axis >= len(shape) or axis < -len(shape):
         raise AssertionError()
@@ -70,7 +159,19 @@ def assert_axis_dimension_lt(x, axis, expected):
 
 
 def assert_axis_dimension_lteq(x, axis, expected):
-    """Docstring."""
+    """Asserts that a specific axis dimension is less than or equal to the expected value.
+
+    Args:
+        x: The array-like object.
+        axis: The index of the axis to check.
+        expected: The value the dimension must be less than or equal to.
+
+    Returns:
+        None
+
+    Raises:
+        AssertionError: If the axis dimension is strictly greater than expected.
+    """
     shape = _get_shape(x)
     if axis >= len(shape) or axis < -len(shape):
         raise AssertionError()
@@ -79,7 +180,18 @@ def assert_axis_dimension_lteq(x, axis, expected):
 
 
 def assert_equal_rank(tensors):
-    """Docstring."""
+    """Asserts that all tensors in a list have the same rank (number of dimensions).
+
+    Args:
+        tensors: A list or tuple of array-like objects.
+
+    Returns:
+        None
+
+    Raises:
+        ValueError: If tensors is not a list or tuple.
+        AssertionError: If the rank of any tensor differs from the first.
+    """
     if not isinstance(tensors, (list, tuple)):
         raise ValueError()
     if not tensors:
@@ -91,7 +203,19 @@ def assert_equal_rank(tensors):
 
 
 def assert_equal_shape(tensors, dims=None):
-    """Docstring."""
+    """Asserts that all tensors in a list have the same shape, or match on specific dimensions.
+
+    Args:
+        tensors: A list or tuple of array-like objects.
+        dims: An optional index or list of indices. If provided, checks equality only for those dimensions.
+
+    Returns:
+        None
+
+    Raises:
+        ValueError: If tensors is not a list or tuple, or if an invalid dimension index is provided.
+        AssertionError: If shapes or the specified dimensions differ among tensors.
+    """
     if not isinstance(tensors, (list, tuple)):
         raise ValueError()
     if not tensors:
@@ -118,7 +242,19 @@ def assert_equal_shape(tensors, dims=None):
 
 
 def assert_equal_shape_prefix(tensors, prefix_len):
-    """Docstring."""
+    """Asserts that all tensors in a list have the same shape prefix of a given length.
+
+    Args:
+        tensors: A list or tuple of array-like objects.
+        prefix_len: The number of dimensions from the start to compare.
+
+    Returns:
+        None
+
+    Raises:
+        ValueError: If tensors is not a list or tuple.
+        AssertionError: If the shape prefixes of the tensors do not match.
+    """
     if not isinstance(tensors, (list, tuple)):
         raise ValueError()
     if not tensors:
@@ -130,7 +266,19 @@ def assert_equal_shape_prefix(tensors, prefix_len):
 
 
 def assert_equal_shape_suffix(tensors, suffix_len):
-    """Docstring."""
+    """Asserts that all tensors in a list have the same shape suffix of a given length.
+
+    Args:
+        tensors: A list or tuple of array-like objects.
+        suffix_len: The number of dimensions from the end to compare.
+
+    Returns:
+        None
+
+    Raises:
+        ValueError: If tensors is not a list or tuple.
+        AssertionError: If the shape suffixes of the tensors do not match.
+    """
     if not isinstance(tensors, (list, tuple)):
         raise ValueError()
     if not tensors:
@@ -144,7 +292,18 @@ def assert_equal_shape_suffix(tensors, suffix_len):
 
 
 def assert_equal_size(tensors):
-    """Docstring."""
+    """Asserts that all tensors in a list have the same total number of elements.
+
+    Args:
+        tensors: A list or tuple of array-like objects.
+
+    Returns:
+        None
+
+    Raises:
+        ValueError: If tensors is not a list or tuple.
+        AssertionError: If the total size of any tensor differs from the first.
+    """
     if not isinstance(tensors, (list, tuple)):
         raise ValueError()
     if not tensors:
@@ -156,7 +315,18 @@ def assert_equal_size(tensors):
 
 
 def assert_rank(x, expected):
-    """Docstring."""
+    """Asserts that an array-like object has the expected rank.
+
+    Args:
+        x: The array-like object.
+        expected: An integer or a collection of integers representing the allowed rank(s).
+
+    Returns:
+        None
+
+    Raises:
+        AssertionError: If the rank of x is not among the expected ranks.
+    """
     r = _get_rank(x)
     if isinstance(expected, int):
         expected = {expected}
@@ -167,7 +337,19 @@ def assert_rank(x, expected):
 
 
 def assert_shape(x, expected):
-    """Docstring."""
+    """Asserts that an array-like object has the expected shape.
+
+    Args:
+        x: The array-like object.
+        expected: The expected shape tuple. May contain None or Ellipsis for wildcard matching.
+
+    Returns:
+        None
+
+    Raises:
+        ValueError: If multiple Ellipsis are provided.
+        AssertionError: If the shape of x does not match the expected pattern.
+    """
     s = _get_shape(x)
     if expected == ():
         if s != ():
@@ -189,7 +371,18 @@ def assert_shape(x, expected):
 
 
 def assert_size(x, expected):
-    """Docstring."""
+    """Asserts that an array-like object has the expected total number of elements.
+
+    Args:
+        x: The array-like object.
+        expected: An integer, tuple, or set of integers representing the allowed size(s).
+
+    Returns:
+        None
+
+    Raises:
+        AssertionError: If the size of x does not match any of the expected sizes.
+    """
     s = _get_size(x)
     if isinstance(expected, int):
         expected = {expected}
@@ -211,7 +404,18 @@ def assert_size(x, expected):
 
 
 def assert_type(x, expected):
-    """Docstring."""
+    """Asserts that an array-like object or value has the expected data type.
+
+    Args:
+        x: The object or value to check.
+        expected: The expected data type.
+
+    Returns:
+        None
+
+    Raises:
+        AssertionError: If the type of x does not match the expected type.
+    """
     t = _get_type(x)
     if isinstance(x, (int, float)):
         if type(x) is not expected:

@@ -24,7 +24,8 @@ dev = [
     "pytest-cov",
     "mypy",
     "pre-commit",
-    "interrogate"
+    "interrogate",
+    "numpy"
 ]
 
 

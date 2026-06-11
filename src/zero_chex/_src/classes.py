@@ -1,10 +1,21 @@
-"""Module docstring."""
+"""Module providing core classes for chex.
+
+This module includes utility classes for handling dimensions, test case variants,
+and other core functionality.
+"""
 
 import collections
 
 
 class ChexVariantType:
-    """Docstring."""
+    """Enumeration of available variant types for tests.
+
+    Attributes:
+        WITH_JIT: Variant enabling JIT compilation.
+        WITHOUT_JIT: Variant disabling JIT compilation.
+        WITH_PMAP: Variant enabling PMAP execution.
+        WITHOUT_PMAP: Variant disabling PMAP execution.
+    """
 
     WITH_JIT = "_with_jit"
     WITHOUT_JIT = "_without_jit"
@@ -13,34 +24,73 @@ class ChexVariantType:
 
 
 class Dimensions(collections.abc.MutableMapping):
-    """Docstring."""
+    """A dictionary-like class mapping dimension identifiers to their sizes.
+
+    This class provides custom validation and assignment logic for array dimensions.
+    """
 
     def __init__(self, **kwargs):
-        """Docstring."""
+        """Initializes a Dimensions instance.
+
+        Args:
+            **kwargs: Initial dimension names and sizes.
+        """
         super().__setattr__("_dims", kwargs)
 
     def __setattr__(self, key, value):
-        """Docstring."""
+        """Sets a dimension or internal attribute.
+
+        Args:
+            key: The dimension name or attribute name.
+            value: The size of the dimension.
+        """
         if key == "_dims":
             super().__setattr__(key, value)
         else:
             self._dims[key] = value
 
     def __getattr__(self, key):
-        """Docstring."""
+        """Retrieves a dimension size.
+
+        Args:
+            key: The dimension name.
+
+        Returns:
+            The size of the dimension.
+
+        Raises:
+            AttributeError: If the dimension does not exist.
+        """
         if key in self._dims:
             return self._dims[key]
         raise AttributeError(key)
 
     def _validate_dim(self, key):
-        """Docstring."""
+        """Validates a dimension key.
+
+        Args:
+            key: The dimension key to validate.
+
+        Raises:
+            TypeError: If the key is not a string.
+            KeyError: If the key contains invalid characters.
+        """
         if not isinstance(key, str):
             raise TypeError("dimension name must be a string")
         if not key.isalpha() and not key == "_":
             raise KeyError("contain letters")
 
     def __setitem__(self, key, value):
-        """Docstring."""
+        """Sets one or more dimension sizes.
+
+        Args:
+            key: The dimension name(s) to set.
+            value: The size(s) to assign.
+
+        Raises:
+            TypeError: If key is not a string or value is not sized.
+            ValueError: If the lengths of key and value mismatch.
+        """
         if not isinstance(key, str):
             raise TypeError("key must be a string")
         if not hasattr(value, "__len__"):
@@ -58,7 +108,17 @@ class Dimensions(collections.abc.MutableMapping):
             self._dims[k] = value[i]
 
     def _getdim(self, key):
-        """Docstring."""
+        """Internal helper to retrieve a single dimension size.
+
+        Args:
+            key: The single character key or special token.
+
+        Returns:
+            The size of the dimension, or None for wildcard '*'.
+
+        Raises:
+            KeyError: If the dimension is not found.
+        """
         if key == "*":
             return None
         if key.isdigit():
@@ -68,7 +128,18 @@ class Dimensions(collections.abc.MutableMapping):
         return self._dims[key]
 
     def __getitem__(self, key):
-        """Docstring."""
+        """Retrieves dimension sizes, parsing complex dimension string expressions.
+
+        Args:
+            key: The string representing dimensions to retrieve.
+
+        Returns:
+            A tuple of dimension sizes corresponding to the parsed key expression.
+
+        Raises:
+            TypeError: If key is not a string.
+            ValueError: If the key string contains unmatched or nested parentheses.
+        """
         if not isinstance(key, str):
             raise TypeError("key must be a string")
         import re
@@ -98,13 +169,27 @@ class Dimensions(collections.abc.MutableMapping):
         return tuple(self._getdim(k) for k in key)
 
     def __delitem__(self, key):
-        """Docstring."""
+        """Deletes a dimension.
+
+        Args:
+            key: The string identifier of the dimension.
+
+        Raises:
+            TypeError: If the key is not a string.
+        """
         if not isinstance(key, str):
             raise TypeError("key must be a string")
         self._deldim(key)
 
     def _deldim(self, key):
-        """Docstring."""
+        """Internal helper to delete a dimension.
+
+        Args:
+            key: The dimension to delete.
+
+        Raises:
+            KeyError: If the dimension is not found.
+        """
         if key not in self._dims:
             if key == "_":
                 return
@@ -112,20 +197,42 @@ class Dimensions(collections.abc.MutableMapping):
         del self._dims[key]
 
     def __iter__(self):
-        """Docstring."""
+        """Returns an iterator over the stored dimensions.
+
+        Returns:
+            An iterator over the dimension keys.
+        """
         return iter(self._dims)
 
     def __len__(self):
-        """Docstring."""
+        """Returns the number of stored dimensions.
+
+        Returns:
+            The number of stored dimensions.
+        """
         return len(self._dims)
 
     def __repr__(self):
-        """Docstring."""
+        """Returns a string representation of the Dimensions object.
+
+        Returns:
+            A string containing the dimensions and their sizes.
+        """
         items = ", ".join(f"{k}={v}" for k, v in sorted(self._dims.items()))
         return f"Dimensions({items})"
 
     def size(self, key):
-        """Docstring."""
+        """Computes the product of dimensions for a given key string.
+
+        Args:
+            key: The dimension string to compute the size for.
+
+        Returns:
+            The product of the specified dimensions.
+
+        Raises:
+            ValueError: If a dimension is None or 0.
+        """
         import math
 
         res = self.__getitem__(key)
@@ -138,8 +245,18 @@ class Dimensions(collections.abc.MutableMapping):
 
 
 class TestCase:
-    """Docstring."""
+    """Base class for Chex test cases.
+
+    Provides testing utilities and variants for JAX/Flax compatibility testing.
+    """
 
     def variant(self):
-        """Docstring."""
+        """Returns the active test variant.
+
+        Returns:
+            The active ChexVariantType.
+
+        Raises:
+            RuntimeError: Always raised if not overridden by a subclass or decorator.
+        """
         raise RuntimeError("self.variant is not defined")

@@ -1,4 +1,4 @@
-"Module docstring."
+"""Type definitions for the zero_chex library."""
 
 from typing import TYPE_CHECKING
 
@@ -10,7 +10,11 @@ if TYPE_CHECKING:
     JaxException = Exception
 
     class ChexifyChecks:
-        """Docstring."""
+        """Flags for enabling specific checks during execution.
+
+        Attributes:
+            user: User-defined checks configuration.
+        """
 
         user = None
 

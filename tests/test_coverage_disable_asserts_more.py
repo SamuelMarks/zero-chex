@@ -1,5 +1,5 @@
-import ml_switcheroo.ops as np
-import ml_switcheroo.core.dtype as dt
+import ml_switcheroo_compiler.ops as np
+import ml_switcheroo_compiler.core.dtype as dt
 
 import zero_chex as chex
 

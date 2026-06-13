@@ -1,6 +1,6 @@
 """Tests for tensor assertions."""
 
-import ml_switcheroo.ops as jnp
+import ml_switcheroo_compiler.ops as jnp
 import pytest
 
 from zero_chex import (

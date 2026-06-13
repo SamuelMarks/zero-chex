@@ -2,7 +2,7 @@
 """Tests for type aliases."""
 
 import zero_jax as jax
-from ml_switcheroo.core.tensor import Tensor
+from ml_switcheroo_compiler.core.tensor import Tensor
 
 
 from zero_chex import (

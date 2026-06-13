@@ -30,7 +30,14 @@ def get_stdlib_modules():
     return modules
 
 
-ALLOWED_3RD_PARTY = {"pydantic", "cdd", "ml_switcheroo", "zero_jax", "zero_chex"}
+ALLOWED_3RD_PARTY = {
+    "pydantic",
+    "cdd",
+    "ml_switcheroo_compiler",
+    "ml_switcheroo_ir",
+    "zero_jax",
+    "zero_chex",
+}
 STDLIB_MODULES = get_stdlib_modules()
 
 

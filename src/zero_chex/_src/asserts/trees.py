@@ -1,6 +1,6 @@
 """Tree assertions."""
 
-import ml_switcheroo.ops as jnp
+import ml_switcheroo_compiler.ops as jnp
 import math
 from zero_chex._src.tree_util import tree_leaves
 

@@ -1,6 +1,6 @@
 import pytest
-import ml_switcheroo.ops as np
-import ml_switcheroo.core.dtype as dt
+import ml_switcheroo_compiler.ops as np
+import ml_switcheroo_compiler.core.dtype as dt
 
 import zero_chex as chex
 
@@ -133,8 +133,27 @@ def test_assert_tree_all_finite_pass():
 def test_assert_tree_all_finite_tensor_fail_mocked(mocker):
     import zero_chex as chex
 
-    mocker.patch("ml_switcheroo.ops.all", return_value=False)
+    mocker.patch("ml_switcheroo_compiler.ops.all", return_value=False)
     import pytest
 
     with pytest.raises(AssertionError):
-        chex.assert_tree_all_finite({"a": __import__("ml_switcheroo").ops.ones((1,))})
+        chex.assert_tree_all_finite(
+            {"a": __import__("ml_switcheroo_compiler").ops.ones((1,))}
+        )
+
+
+def test_assert_tree_all_finite_scalar_nan():
+    from zero_chex import assert_tree_all_finite
+    import pytest
+
+    with pytest.raises(AssertionError):
+        assert_tree_all_finite([float("nan")])
+
+
+def test_assert_tree_all_finite_scalar_nan_mocked(mocker):
+    from zero_chex import assert_tree_all_finite
+    import pytest
+
+    mocker.patch("ml_switcheroo_compiler.ops.isfinite", side_effect=TypeError)
+    with pytest.raises(AssertionError):
+        assert_tree_all_finite([float("nan")])

@@ -1,6 +1,6 @@
 """Basic assertions and utilities."""
 
-import ml_switcheroo.shape
+import ml_switcheroo_compiler.ops as jnp
 
 
 def assert_equal(a, b):
@@ -142,7 +142,7 @@ def assert_is_broadcastable(shape1, shape2):
         AssertionError: If the shapes cannot be broadcasted together.
     """
     try:
-        ml_switcheroo.shape.broadcast_shapes(shape1, shape2)
+        jnp.broadcast_shapes(shape1, shape2)
     except ValueError:
         raise AssertionError(
             "Shape %s is not broadcastable with shape %s" % (shape1, shape2)

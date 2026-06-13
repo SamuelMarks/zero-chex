@@ -1,6 +1,6 @@
 import pytest
-import ml_switcheroo.ops as np
-import ml_switcheroo.core.dtype as dt
+import ml_switcheroo_compiler.ops as np
+import ml_switcheroo_compiler.core.dtype as dt
 
 import zero_chex as chex
 
@@ -170,3 +170,9 @@ def test_assert_shape_ellipsis_return():
 def test_assert_shape_tuple_assertionerror():
     with pytest.raises(AssertionError):
         chex.assert_shape(np.ones((2, 3)), (2, 4))
+
+
+def test_empty_list_shape():
+    from zero_chex._src.asserts.tensors import _get_shape
+
+    assert _get_shape([]) == (0,)

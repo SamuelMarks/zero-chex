@@ -21,19 +21,19 @@ if TYPE_CHECKING:
 
 from typing import Any, Iterable, Mapping, Sequence, Set, Union
 import zero_jax as jax
-import ml_switcheroo
+import ml_switcheroo_compiler
 
 ArrayBatched = jax.Array
 ArrayDevice = jax.Array
-ArrayNumpy = ml_switcheroo.core.tensor.Tensor
+ArrayNumpy = ml_switcheroo_compiler.core.tensor.Tensor
 ArraySharded = jax.Array
 Device = Any
 PRNGKey = Any
 PyTreeDef = jax.tree_util.PyTreeDef
 
-Array = Union[jax.Array, ml_switcheroo.core.tensor.Tensor, bool, int, float]
+Array = Union[jax.Array, ml_switcheroo_compiler.core.tensor.Tensor, bool, int, float]
 Scalar = Union[float, int]
-ArrayDType = Union[str, type[Any], ml_switcheroo.core.dtype.DType, Any]
+ArrayDType = Union[str, type[Any], ml_switcheroo_compiler.core.dtype.DType, Any]
 Numeric = Union[Array, Scalar]
 Shape = Sequence[Union[int, Any]]
 

@@ -1,5 +1,5 @@
 import pytest
-import ml_switcheroo.ops as jnp
+import ml_switcheroo_compiler.ops as jnp
 
 
 def test_trees():
@@ -84,6 +84,6 @@ def test_assert_trees_all_equal_dtypes_fail_no_dtype():
 
 def test_assert_trees_all_equal_shapes_and_dtypes():
     from zero_chex import assert_trees_all_equal_shapes_and_dtypes
-    import ml_switcheroo.ops as jnp
+    import ml_switcheroo_compiler.ops as jnp
 
     assert_trees_all_equal_shapes_and_dtypes([jnp.zeros((2,))], [jnp.zeros((2,))])

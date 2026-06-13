@@ -2,7 +2,7 @@
 
 import pytest
 import zero_jax as jax
-import ml_switcheroo.ops as jnp
+import ml_switcheroo_compiler.ops as jnp
 
 from zero_chex import (
     block_until_chexify_assertions_complete,

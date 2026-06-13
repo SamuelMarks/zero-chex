@@ -34,10 +34,15 @@ jobs:
     - name: Check Linting (Ruff)
       run: ruff check .
 
+    - name: API Parity Check
+      run: python scripts/check_api_parity.py
+
+    - name: Test Parity Check
+      run: python scripts/check_test_parity.py
+
     - name: Test & Coverage
       run: |
         pytest --cov=. --cov-report=xml
-        pytest tests/official/
         
     - name: Update Badges
       run: |

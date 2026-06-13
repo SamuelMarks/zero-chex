@@ -31,7 +31,7 @@ def _check_sharding(leaf):
     return False
 
 
-def assert_tree_is_on_device(tree, platform=None):
+def assert_tree_is_on_device(tree, platform, device=None):
     """Asserts that all leaves in a tree are on the specified device platform.
 
     Args:
@@ -68,59 +68,25 @@ def assert_tree_is_sharded(tree, devices=None):
             raise AssertionError("is sharded across")
 
 
-def assert_trees_all_close(tree1, tree2, rtol=1e-5, atol=1e-8):
-    """Asserts that two trees are approximately equal.
-
-    Args:
-        tree1: The first PyTree.
-        tree2: The second PyTree.
-        rtol: The relative tolerance parameter.
-        atol: The absolute tolerance parameter.
-
-    Returns:
-        None
-
-    Raises:
-        AssertionError: If the leaves of the trees are not approximately equal within the specified tolerances.
-    """
+def assert_trees_all_close(*trees, rtol=1e-5, atol=1e-8):
+    tree1 = trees[0]
+    tree2 = trees[1]
     for l1, l2 in zip(_get_leaves(tree1), _get_leaves(tree2)):
         if not jnp.allclose(l1, l2, rtol=rtol, atol=atol):
             raise AssertionError()
 
 
-def assert_trees_all_close_ulp(tree1, tree2, maxulp=1):
-    """Asserts that two trees are equal within a specified number of Units in the Last Place (ULP).
-
-    Args:
-        tree1: The first PyTree.
-        tree2: The second PyTree.
-        maxulp: The maximum allowed difference in ULP.
-
-    Returns:
-        None
-
-    Raises:
-        AssertionError: If the leaves differ by more than maxulp.
-    """
+def assert_trees_all_close_ulp(*trees, maxulp=1):
+    tree1 = trees[0]
+    tree2 = trees[1]
     for l1, l2 in zip(_get_leaves(tree1), _get_leaves(tree2)):
         if not jnp.allclose(l1, l2, rtol=0, atol=maxulp * 1e-7):
             raise AssertionError()
 
 
-def assert_trees_all_equal(tree1, tree2, strict=False):
-    """Asserts that all corresponding leaves in two trees are exactly equal.
-
-    Args:
-        tree1: The first PyTree.
-        tree2: The second PyTree.
-        strict: If True, enforce strict equality of dtypes as well.
-
-    Returns:
-        None
-
-    Raises:
-        AssertionError: If any corresponding leaves are not exactly equal.
-    """
+def assert_trees_all_equal(*trees, strict=False):
+    tree1 = trees[0]
+    tree2 = trees[1]
     for l1, l2 in zip(_get_leaves(tree1), _get_leaves(tree2)):
         v1 = l1.data if hasattr(l1, "data") else l1
         v2 = l2.data if hasattr(l2, "data") else l2
@@ -128,7 +94,7 @@ def assert_trees_all_equal(tree1, tree2, strict=False):
             raise AssertionError()
 
 
-def assert_tree_all_finite(tree):
+def assert_tree_all_finite(tree_like):
     """Asserts that all leaves in a tree contain only finite values (no NaN or Inf).
 
     Args:
@@ -140,7 +106,7 @@ def assert_tree_all_finite(tree):
     Raises:
         AssertionError: If any leaf contains non-finite values.
     """
-    for leaf in _get_leaves(tree):
+    for leaf in _get_leaves(tree_like):
         import math
 
         try:
@@ -168,7 +134,7 @@ def assert_tree_has_only_ndarrays(tree):
             raise AssertionError()
 
 
-def assert_tree_is_on_host(tree, allow_cpu_device=True):
+def assert_tree_is_on_host(tree, allow_cpu_device=True, allow_sharded_arrays=True):
     """Asserts that all leaves in a tree are located on the host device (CPU).
 
     Args:
@@ -208,7 +174,7 @@ def assert_tree_no_nones(tree):
             raise AssertionError()
 
 
-def assert_tree_shape_prefix(tree, prefix):
+def assert_tree_shape_prefix(tree, shape_prefix):
     """Asserts that the shape of all leaves in a tree starts with the specified prefix.
 
     Args:
@@ -229,11 +195,11 @@ def assert_tree_shape_prefix(tree, prefix):
             if isinstance(leaf, (list, tuple))
             else ()
         )
-        if s[: len(prefix)] != tuple(prefix):
+        if s[: len(shape_prefix)] != tuple(shape_prefix):
             raise AssertionError()
 
 
-def assert_tree_shape_suffix(tree, suffix):
+def assert_tree_shape_suffix(tree, shape_suffix):
     """Asserts that the shape of all leaves in a tree ends with the specified suffix.
 
     Args:
@@ -254,60 +220,28 @@ def assert_tree_shape_suffix(tree, suffix):
             if isinstance(leaf, (list, tuple))
             else ()
         )
-        if len(suffix) > 0 and s[-len(suffix) :] != tuple(suffix):
+        if len(shape_suffix) > 0 and s[-len(shape_suffix) :] != tuple(shape_suffix):
             raise AssertionError()
 
 
-def assert_trees_all_equal_structs(tree1, tree2):
-    """Asserts that two trees have the exact same structure type.
-
-    Args:
-        tree1: The first PyTree.
-        tree2: The second PyTree.
-
-    Returns:
-        None
-
-    Raises:
-        ValueError: If the types of the two trees are different.
-    """
+def assert_trees_all_equal_structs(*trees):
+    tree1 = trees[0]
+    tree2 = trees[1]
     if type(tree1) is not type(tree2):
         raise ValueError()
 
 
-def assert_trees_all_equal_comparator(comp, err, tree1, tree2):
-    """Asserts that all corresponding leaves in two trees satisfy a custom comparator.
-
-    Args:
-        comp: A callable that takes two leaves and returns a boolean.
-        err: A callable that takes two leaves and returns an error message.
-        tree1: The first PyTree.
-        tree2: The second PyTree.
-
-    Returns:
-        None
-
-    Raises:
-        AssertionError: If the comparator returns False for any pair of leaves.
-    """
+def assert_trees_all_equal_comparator(equality_comparator, error_msg_fn, *trees):
+    tree1 = trees[0]
+    tree2 = trees[1]
     for l1, l2 in zip(_get_leaves(tree1), _get_leaves(tree2)):
-        if not comp(l1, l2):
-            raise AssertionError(err(l1, l2))
+        if not equality_comparator(l1, l2):
+            raise AssertionError(error_msg_fn(l1, l2))
 
 
-def assert_trees_all_equal_dtypes(tree1, tree2):
-    """Asserts that corresponding leaves in two trees have identical data types.
-
-    Args:
-        tree1: The first PyTree.
-        tree2: The second PyTree.
-
-    Returns:
-        None
-
-    Raises:
-        AssertionError: If corresponding leaves do not have the same dtype.
-    """
+def assert_trees_all_equal_dtypes(*trees):
+    tree1 = trees[0]
+    tree2 = trees[1]
     for l1, l2 in zip(_get_leaves(tree1), _get_leaves(tree2)):
         if not hasattr(l1, "dtype") or not hasattr(l2, "dtype"):
             raise AssertionError("is not a (j-)np array")
@@ -315,54 +249,24 @@ def assert_trees_all_equal_dtypes(tree1, tree2):
             raise AssertionError()
 
 
-def assert_trees_all_equal_shapes(tree1, tree2):
-    """Asserts that corresponding leaves in two trees have identical shapes.
-
-    Args:
-        tree1: The first PyTree.
-        tree2: The second PyTree.
-
-    Returns:
-        None
-
-    Raises:
-        AssertionError: If corresponding leaves do not have the same shape.
-    """
+def assert_trees_all_equal_shapes(*trees):
+    tree1 = trees[0]
+    tree2 = trees[1]
     for l1, l2 in zip(_get_leaves(tree1), _get_leaves(tree2)):
         if getattr(l1, "shape", ()) != getattr(l2, "shape", ()):
             raise AssertionError()
 
 
-def assert_trees_all_equal_sizes(tree1, tree2):
-    """Asserts that corresponding leaves in two trees have identical total sizes (number of elements).
-
-    Args:
-        tree1: The first PyTree.
-        tree2: The second PyTree.
-
-    Returns:
-        None
-
-    Raises:
-        AssertionError: If corresponding leaves do not have the same total size.
-    """
+def assert_trees_all_equal_sizes(*trees):
+    tree1 = trees[0]
+    tree2 = trees[1]
     for l1, l2 in zip(_get_leaves(tree1), _get_leaves(tree2)):
         if math.prod(getattr(l1, "shape", ())) != math.prod(getattr(l2, "shape", ())):
             raise AssertionError()
 
 
-def assert_trees_all_equal_shapes_and_dtypes(tree1, tree2):
-    """Asserts that corresponding leaves in two trees have identical shapes and data types.
-
-    Args:
-        tree1: The first PyTree.
-        tree2: The second PyTree.
-
-    Returns:
-        None
-
-    Raises:
-        AssertionError: If corresponding leaves differ in either shape or dtype.
-    """
+def assert_trees_all_equal_shapes_and_dtypes(*trees):
+    tree1 = trees[0]
+    tree2 = trees[1]
     assert_trees_all_equal_shapes(tree1, tree2)
     assert_trees_all_equal_dtypes(tree1, tree2)

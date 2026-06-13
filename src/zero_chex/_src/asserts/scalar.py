@@ -17,7 +17,7 @@ def assert_scalar(x):
         raise AssertionError("x must be a scalar")
 
 
-def assert_scalar_in(x, min_val, max_val, included=True):
+def assert_scalar_in(x, min_, max_, included=True):
     """Asserts that x is within the specified range.
 
     Args:
@@ -33,11 +33,11 @@ def assert_scalar_in(x, min_val, max_val, included=True):
         AssertionError: If x is outside the specified range.
     """
     if included:
-        if x < min_val or x > max_val:
-            raise AssertionError("x must be in [%s, %s]" % (min_val, max_val))
+        if x < min_ or x > max_:
+            raise AssertionError("x must be in [%s, %s]" % (min_, max_))
     else:
-        if x <= min_val or x >= max_val:
-            raise AssertionError("x must be in (%s, %s)" % (min_val, max_val))
+        if x <= min_ or x >= max_:
+            raise AssertionError("x must be in (%s, %s)" % (min_, max_))
 
 
 def assert_scalar_negative(x):

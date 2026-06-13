@@ -1,0 +1,334 @@
+{
+  "all_variants": {
+    "kind": "function",
+    "signature": "(test_method='__no__default__', with_jit: bool = True, without_jit: bool = True, with_device: bool = True, without_device: bool = True, with_pmap: bool = True) -> chex._src.variants.VariantsTestCaseGenerator"
+  },
+  "Array": {
+    "kind": "other"
+  },
+  "ArrayBatched": {
+    "kind": "class"
+  },
+  "ArrayDevice": {
+    "kind": "class"
+  },
+  "ArrayDeviceTree": {
+    "kind": "other"
+  },
+  "ArrayDType": {
+    "kind": "other"
+  },
+  "ArrayNumpy": {
+    "kind": "class"
+  },
+  "ArrayNumpyTree": {
+    "kind": "other"
+  },
+  "ArraySharded": {
+    "kind": "class"
+  },
+  "ArrayTree": {
+    "kind": "other"
+  },
+  "ChexifyChecks": {
+    "kind": "other"
+  },
+  "assert_axis_dimension": {
+    "kind": "function",
+    "signature": "(tensor: Union[jax.Array, numpy.ndarray, numpy.bool_, numpy.number], axis: int, expected: int) -> None"
+  },
+  "assert_axis_dimension_comparator": {
+    "kind": "function",
+    "signature": "(tensor: Union[jax.Array, numpy.ndarray, numpy.bool_, numpy.number], axis: int, pass_fn: Callable[[int], bool], error_string: str)"
+  },
+  "assert_axis_dimension_gt": {
+    "kind": "function",
+    "signature": "(tensor: Union[jax.Array, numpy.ndarray, numpy.bool_, numpy.number], axis: int, val: int) -> None"
+  },
+  "assert_axis_dimension_gteq": {
+    "kind": "function",
+    "signature": "(tensor: Union[jax.Array, numpy.ndarray, numpy.bool_, numpy.number], axis: int, val: int) -> None"
+  },
+  "assert_axis_dimension_lt": {
+    "kind": "function",
+    "signature": "(tensor: Union[jax.Array, numpy.ndarray, numpy.bool_, numpy.number], axis: int, val: int) -> None"
+  },
+  "assert_axis_dimension_lteq": {
+    "kind": "function",
+    "signature": "(tensor: Union[jax.Array, numpy.ndarray, numpy.bool_, numpy.number], axis: int, val: int) -> None"
+  },
+  "assert_devices_available": {
+    "kind": "function",
+    "signature": "(n: int, devtype: str, backend: Optional[str] = None, not_less_than: bool = False) -> None"
+  },
+  "assert_equal": {
+    "kind": "function",
+    "signature": "(first: Any, second: Any) -> None"
+  },
+  "assert_equal_rank": {
+    "kind": "function",
+    "signature": "(inputs: Sequence[Union[jax.Array, numpy.ndarray, numpy.bool_, numpy.number]]) -> None"
+  },
+  "assert_equal_shape": {
+    "kind": "function",
+    "signature": "(inputs: Sequence[Union[jax.Array, numpy.ndarray, numpy.bool_, numpy.number]], *, dims: Union[int, Sequence[int], NoneType] = None) -> None"
+  },
+  "assert_equal_shape_prefix": {
+    "kind": "function",
+    "signature": "(inputs: Sequence[Union[jax.Array, numpy.ndarray, numpy.bool_, numpy.number]], prefix_len: int) -> None"
+  },
+  "assert_equal_shape_suffix": {
+    "kind": "function",
+    "signature": "(inputs: Sequence[Union[jax.Array, numpy.ndarray, numpy.bool_, numpy.number]], suffix_len: int) -> None"
+  },
+  "assert_equal_size": {
+    "kind": "function",
+    "signature": "(inputs: Sequence[Union[jax.Array, numpy.ndarray, numpy.bool_, numpy.number]]) -> None"
+  },
+  "assert_exactly_one_is_none": {
+    "kind": "function",
+    "signature": "(first: Any, second: Any) -> None"
+  },
+  "assert_gpu_available": {
+    "kind": "function",
+    "signature": "(backend: Optional[str] = None) -> None"
+  },
+  "assert_is_broadcastable": {
+    "kind": "function",
+    "signature": "(shape_a: Sequence[int], shape_b: Sequence[int]) -> None"
+  },
+  "assert_is_divisible": {
+    "kind": "function",
+    "signature": "(numerator: int, denominator: int) -> None"
+  },
+  "assert_max_traces": {
+    "kind": "function",
+    "signature": "(fn: Union[Callable[..., Any], int, NoneType] = None, n: Union[Callable[..., Any], int, NoneType] = None)"
+  },
+  "assert_not_both_none": {
+    "kind": "function",
+    "signature": "(first: Any, second: Any) -> None"
+  },
+  "assert_numerical_grads": {
+    "kind": "function",
+    "signature": "(f: Callable[..., Union[jax.Array, numpy.ndarray, numpy.bool_, numpy.number]], f_args: Sequence[Union[jax.Array, numpy.ndarray, numpy.bool_, numpy.number]], order: int, atol: float = 0.01, **check_kwargs) -> None"
+  },
+  "assert_rank": {
+    "kind": "function",
+    "signature": "(inputs: Union[float, int, jax.Array, numpy.ndarray, numpy.bool_, numpy.number, Sequence[Union[jax.Array, numpy.ndarray, numpy.bool_, numpy.number]]], expected_ranks: Union[int, Set[int], Sequence[Union[int, Set[int]]]]) -> None"
+  },
+  "assert_scalar": {
+    "kind": "function",
+    "signature": "(x: Union[float, int]) -> None"
+  },
+  "assert_scalar_in": {
+    "kind": "function",
+    "signature": "(x: Any, min_: Union[float, int], max_: Union[float, int], included: bool = True) -> None"
+  },
+  "assert_scalar_negative": {
+    "kind": "function",
+    "signature": "(x: Union[float, int]) -> None"
+  },
+  "assert_scalar_non_negative": {
+    "kind": "function",
+    "signature": "(x: Union[float, int]) -> None"
+  },
+  "assert_scalar_positive": {
+    "kind": "function",
+    "signature": "(x: Union[float, int]) -> None"
+  },
+  "assert_shape": {
+    "kind": "function",
+    "signature": "(inputs: Union[float, int, jax.Array, numpy.ndarray, numpy.bool_, numpy.number, Sequence[Union[jax.Array, numpy.ndarray, numpy.bool_, numpy.number]]], expected_shapes: Union[Sequence[Union[int, Set[int], ellipsis, NoneType]], Sequence[Sequence[Union[int, Set[int], ellipsis, NoneType]]]]) -> None"
+  },
+  "assert_size": {
+    "kind": "function",
+    "signature": "(inputs: Union[float, int, jax.Array, numpy.ndarray, numpy.bool_, numpy.number, Sequence[Union[jax.Array, numpy.ndarray, numpy.bool_, numpy.number]]], expected_sizes: Union[Sequence[Union[int, Set[int], ellipsis, NoneType]], Sequence[Sequence[Union[int, Set[int], ellipsis, NoneType]]]]) -> None"
+  },
+  "assert_tpu_available": {
+    "kind": "function",
+    "signature": "(backend: Optional[str] = None) -> None"
+  },
+  "assert_tree_all_finite": {
+    "kind": "function",
+    "signature": "(tree_like: Union[jax.Array, numpy.ndarray, numpy.bool_, numpy.number, Iterable[ForwardRef('ArrayTree')], Mapping[Any, ForwardRef('ArrayTree')]]) -> None"
+  },
+  "assert_tree_has_only_ndarrays": {
+    "kind": "function",
+    "signature": "(tree: Union[jax.Array, numpy.ndarray, numpy.bool_, numpy.number, Iterable[ForwardRef('ArrayTree')], Mapping[Any, ForwardRef('ArrayTree')]]) -> None"
+  },
+  "assert_tree_is_on_device": {
+    "kind": "function",
+    "signature": "(tree: Union[jax.Array, numpy.ndarray, numpy.bool_, numpy.number, Iterable[ForwardRef('ArrayTree')], Mapping[Any, ForwardRef('ArrayTree')]], *, platform: Union[Sequence[str], str] = ('gpu', 'tpu'), device: Optional[jaxlib.xla_extension.Device] = None) -> None"
+  },
+  "assert_tree_is_on_host": {
+    "kind": "function",
+    "signature": "(tree: Union[jax.Array, numpy.ndarray, numpy.bool_, numpy.number, Iterable[ForwardRef('ArrayTree')], Mapping[Any, ForwardRef('ArrayTree')]], *, allow_cpu_device: bool = True, allow_sharded_arrays: bool = False) -> None"
+  },
+  "assert_tree_is_sharded": {
+    "kind": "function",
+    "signature": "(tree: Union[jax.Array, numpy.ndarray, numpy.bool_, numpy.number, Iterable[ForwardRef('ArrayTree')], Mapping[Any, ForwardRef('ArrayTree')]], *, devices: Sequence[jaxlib.xla_extension.Device]) -> None"
+  },
+  "assert_tree_no_nones": {
+    "kind": "function",
+    "signature": "(tree: Union[jax.Array, numpy.ndarray, numpy.bool_, numpy.number, Iterable[ForwardRef('ArrayTree')], Mapping[Any, ForwardRef('ArrayTree')]]) -> None"
+  },
+  "assert_tree_shape_prefix": {
+    "kind": "function",
+    "signature": "(tree: Union[jax.Array, numpy.ndarray, numpy.bool_, numpy.number, Iterable[ForwardRef('ArrayTree')], Mapping[Any, ForwardRef('ArrayTree')]], shape_prefix: Sequence[int]) -> None"
+  },
+  "assert_tree_shape_suffix": {
+    "kind": "function",
+    "signature": "(tree: Union[jax.Array, numpy.ndarray, numpy.bool_, numpy.number, Iterable[ForwardRef('ArrayTree')], Mapping[Any, ForwardRef('ArrayTree')]], shape_suffix: Sequence[int]) -> None"
+  },
+  "assert_trees_all_close": {
+    "kind": "function",
+    "signature": "(*trees: Union[jax.Array, numpy.ndarray, numpy.bool_, numpy.number, Iterable[ForwardRef('ArrayTree')], Mapping[Any, ForwardRef('ArrayTree')]], rtol: float = 1e-06, atol: float = 0.0) -> None"
+  },
+  "assert_trees_all_close_ulp": {
+    "kind": "function",
+    "signature": "(*trees: Union[jax.Array, numpy.ndarray, numpy.bool_, numpy.number, Iterable[ForwardRef('ArrayTree')], Mapping[Any, ForwardRef('ArrayTree')]], maxulp: int = 1) -> None"
+  },
+  "assert_trees_all_equal": {
+    "kind": "function",
+    "signature": "(*trees: Union[jax.Array, numpy.ndarray, numpy.bool_, numpy.number, Iterable[ForwardRef('ArrayTree')], Mapping[Any, ForwardRef('ArrayTree')]], strict: bool = False) -> None"
+  },
+  "assert_trees_all_equal_comparator": {
+    "kind": "function",
+    "signature": "(equality_comparator: Callable[[Any, Any], bool], error_msg_fn: Callable[[Any, Any], str], *trees: Union[jax.Array, numpy.ndarray, numpy.bool_, numpy.number, Iterable[ForwardRef('ArrayTree')], Mapping[Any, ForwardRef('ArrayTree')]]) -> None"
+  },
+  "assert_trees_all_equal_dtypes": {
+    "kind": "function",
+    "signature": "(*trees: Union[jax.Array, numpy.ndarray, numpy.bool_, numpy.number, Iterable[ForwardRef('ArrayTree')], Mapping[Any, ForwardRef('ArrayTree')]]) -> None"
+  },
+  "assert_trees_all_equal_shapes": {
+    "kind": "function",
+    "signature": "(*trees: Union[jax.Array, numpy.ndarray, numpy.bool_, numpy.number, Iterable[ForwardRef('ArrayTree')], Mapping[Any, ForwardRef('ArrayTree')]]) -> None"
+  },
+  "assert_trees_all_equal_shapes_and_dtypes": {
+    "kind": "function",
+    "signature": "(*trees: Union[jax.Array, numpy.ndarray, numpy.bool_, numpy.number, Iterable[ForwardRef('ArrayTree')], Mapping[Any, ForwardRef('ArrayTree')]]) -> None"
+  },
+  "assert_trees_all_equal_sizes": {
+    "kind": "function",
+    "signature": "(*trees: Union[jax.Array, numpy.ndarray, numpy.bool_, numpy.number, Iterable[ForwardRef('ArrayTree')], Mapping[Any, ForwardRef('ArrayTree')]]) -> None"
+  },
+  "assert_trees_all_equal_structs": {
+    "kind": "function",
+    "signature": "(*trees: Union[jax.Array, numpy.ndarray, numpy.bool_, numpy.number, Iterable[ForwardRef('ArrayTree')], Mapping[Any, ForwardRef('ArrayTree')]]) -> None"
+  },
+  "assert_type": {
+    "kind": "function",
+    "signature": "(inputs: Union[float, int, jax.Array, numpy.ndarray, numpy.bool_, numpy.number, Sequence[Union[jax.Array, numpy.ndarray, numpy.bool_, numpy.number]]], expected_types: Union[str, type[Any], numpy.dtype, jax._src.SupportsDType, Sequence[Union[str, type[Any], numpy.dtype, jax._src.SupportsDType]]]) -> None"
+  },
+  "block_until_chexify_assertions_complete": {
+    "kind": "function",
+    "signature": "() -> None"
+  },
+  "chexify": {
+    "kind": "function",
+    "signature": "(fn: Callable[..., Any], async_check: bool = True, errors: FrozenSet[type['JaxException']] = frozenset({<class 'jax._src.checkify.FailedCheckError'>})) -> Callable[..., Any]"
+  },
+  "ChexVariantType": {
+    "kind": "class"
+  },
+  "clear_trace_counter": {
+    "kind": "function",
+    "signature": "() -> None"
+  },
+  "create_deprecated_function_alias": {
+    "kind": "function",
+    "signature": "(fun, new_name, deprecated_alias)"
+  },
+  "dataclass": {
+    "kind": "function",
+    "signature": "(cls=None, *, init=True, repr=True, eq=True, order=False, unsafe_hash=False, frozen=False, kw_only: bool = False, mappable_dataclass=True)"
+  },
+  "Device": {
+    "kind": "class"
+  },
+  "Dimensions": {
+    "kind": "class"
+  },
+  "disable_asserts": {
+    "kind": "function",
+    "signature": "() -> None"
+  },
+  "enable_asserts": {
+    "kind": "function",
+    "signature": "() -> None"
+  },
+  "fake_jit": {
+    "kind": "function",
+    "signature": "(enable_patching: bool = True) -> chex._src.fake.FakeContext"
+  },
+  "fake_pmap": {
+    "kind": "function",
+    "signature": "(enable_patching: bool = True, jit_result: bool = False, ignore_axis_index_groups: bool = False, fake_parallel_axis: bool = False) -> chex._src.fake.FakeContext"
+  },
+  "fake_pmap_and_jit": {
+    "kind": "function",
+    "signature": "(enable_pmap_patching: bool = True, enable_jit_patching: bool = True) -> chex._src.fake.FakeContext"
+  },
+  "if_args_not_none": {
+    "kind": "function",
+    "signature": "(fn, *args, **kwargs)"
+  },
+  "mappable_dataclass": {
+    "kind": "function",
+    "signature": "(cls)"
+  },
+  "Numeric": {
+    "kind": "other"
+  },
+  "params_product": {
+    "kind": "function",
+    "signature": "(*params_lists: Sequence[Sequence[Any]], named: bool = False) -> Sequence[Sequence[Any]]"
+  },
+  "PRNGKey": {
+    "kind": "class"
+  },
+  "PyTreeDef": {
+    "kind": "class"
+  },
+  "register_dataclass_type_with_jax_tree_util": {
+    "kind": "function",
+    "signature": "(data_class)"
+  },
+  "restrict_backends": {
+    "kind": "function",
+    "signature": "(*, allowed: Optional[Sequence[str]] = None, forbidden: Optional[Sequence[str]] = None)"
+  },
+  "Scalar": {
+    "kind": "other"
+  },
+  "set_n_cpu_devices": {
+    "kind": "function",
+    "signature": "(n: Optional[int] = None) -> None"
+  },
+  "Shape": {
+    "kind": "other"
+  },
+  "TestCase": {
+    "kind": "class"
+  },
+  "variants": {
+    "kind": "function",
+    "signature": "(test_method='__no__default__', with_jit: bool = False, without_jit: bool = False, with_device: bool = False, without_device: bool = False, with_pmap: bool = False) -> chex._src.variants.VariantsTestCaseGenerator"
+  },
+  "warn_deprecated_function": {
+    "kind": "function",
+    "signature": "(fun: Callable[..., Any], replacement: Optional[str] = None) -> Callable[..., Any]"
+  },
+  "warn_keyword_args_only_in_future": {
+    "kind": "other"
+  },
+  "warn_only_n_pos_args_in_future": {
+    "kind": "function",
+    "signature": "(fun, n)"
+  },
+  "with_jittable_assertions": {
+    "kind": "function",
+    "signature": "(fn: Callable[..., Any], async_check: bool = True) -> Callable[..., Any]"
+  }
+}

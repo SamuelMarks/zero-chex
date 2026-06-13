@@ -3,7 +3,7 @@
 import ml_switcheroo_compiler.ops as jnp
 
 
-def assert_equal(a, b):
+def assert_equal(first, second):
     """Asserts that two values are equal.
 
     Args:
@@ -16,11 +16,11 @@ def assert_equal(a, b):
     Raises:
         AssertionError: If a and b are not equal.
     """
-    if a != b:
+    if first != second:
         raise AssertionError("Values are not equal")
 
 
-def assert_exactly_one_is_none(*args):
+def assert_exactly_one_is_none(first, second):
     """Asserts that exactly one of the provided arguments is None.
 
     Args:
@@ -32,12 +32,12 @@ def assert_exactly_one_is_none(*args):
     Raises:
         AssertionError: If the number of None arguments is not exactly one.
     """
-    num_nones = sum(1 for a in args if a is None)
+    num_nones = sum(1 for a in (first, second) if a is None)
     if num_nones != 1:
         raise AssertionError("One and exactly one argument must be None")
 
 
-def assert_not_both_none(a, b):
+def assert_not_both_none(first, second):
     """Asserts that at least one of the two arguments is not None.
 
     Args:
@@ -50,7 +50,7 @@ def assert_not_both_none(a, b):
     Raises:
         AssertionError: If both a and b are None.
     """
-    if a is None and b is None:
+    if first is None and second is None:
         raise AssertionError("At least one argument must be non-None")
 
 
@@ -71,7 +71,7 @@ def _num_devices_available(platform):
     return 1
 
 
-def assert_devices_available(n, platform="cpu", not_less_than=False):
+def assert_devices_available(n, devtype="cpu", backend=None, not_less_than=False):
     """Asserts that a specific number of devices are available for a given platform.
 
     Args:
@@ -86,17 +86,17 @@ def assert_devices_available(n, platform="cpu", not_less_than=False):
     Raises:
         AssertionError: If the availability condition is not met.
     """
-    av = _num_devices_available(platform)
+    av = _num_devices_available(devtype)
     if not_less_than:
         if av < n:
-            raise AssertionError("Only %d %s devices available" % (av, platform))
+            raise AssertionError("Only %d %s devices available" % (av, devtype))
     elif av != n:
         raise AssertionError(
-            "Exactly %d %s devices available, not %d" % (av, platform, n)
+            "Exactly %d %s devices available, not %d" % (av, devtype, n)
         )
 
 
-def assert_gpu_available():
+def assert_gpu_available(backend=None):
     """Asserts that at least one GPU device is available.
 
     Args:
@@ -112,7 +112,7 @@ def assert_gpu_available():
         raise AssertionError("No GPU devices available")
 
 
-def assert_tpu_available():
+def assert_tpu_available(backend=None):
     """Asserts that at least one TPU device is available.
 
     Args:
@@ -128,7 +128,7 @@ def assert_tpu_available():
         raise AssertionError("No TPU devices available")
 
 
-def assert_is_broadcastable(shape1, shape2):
+def assert_is_broadcastable(shape_a, shape_b):
     """Asserts that two shapes are broadcastable with each other.
 
     Args:
@@ -142,14 +142,14 @@ def assert_is_broadcastable(shape1, shape2):
         AssertionError: If the shapes cannot be broadcasted together.
     """
     try:
-        jnp.broadcast_shapes(shape1, shape2)
+        jnp.broadcast_shapes(shape_a, shape_b)
     except ValueError:
         raise AssertionError(
-            "Shape %s is not broadcastable with shape %s" % (shape1, shape2)
+            "Shape %s is not broadcastable with shape %s" % (shape_a, shape_b)
         )
 
 
-def assert_is_divisible(a, b):
+def assert_is_divisible(numerator, denominator):
     """Asserts that the first argument is divisible by the second argument.
 
     Args:
@@ -162,5 +162,5 @@ def assert_is_divisible(a, b):
     Raises:
         AssertionError: If `a` modulo `b` is not 0.
     """
-    if a % b != 0:
-        raise AssertionError("%d is not divisible by %d" % (a, b))
+    if numerator % denominator != 0:
+        raise AssertionError("%d is not divisible by %d" % (numerator, denominator))

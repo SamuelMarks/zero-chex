@@ -45,3 +45,17 @@ repos:
         language: system
         files: ^(SEMANTIC_PLAN\.md|src/.*\.py)$
         pass_filenames: false
+
+      - id: check-api-parity
+        name: Check API Parity against Snapshot
+        entry: env PYTHONPATH=src python3 scripts/check_api_parity.py
+        language: system
+        files: ^(src/.*\.py|chex_api_snapshot\.json|scripts/check_api_parity\.py)$
+        pass_filenames: false
+
+      - id: check-test-parity
+        name: Check Test Coverage against Snapshot
+        entry: env PYTHONPATH=src python3 scripts/check_test_parity.py
+        language: system
+        files: ^(src/.*\.py|tests/.*\.py|chex_api_snapshot\.json|scripts/check_test_parity\.py)$
+        pass_filenames: false

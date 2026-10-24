@@ -7,16 +7,16 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![CI](https://github.com/SamuelMarks/zero-chex/actions/workflows/ci.yml/badge.svg)](https://github.com/SamuelMarks/zero-chex/actions)
 [![Test Coverage](https://img.shields.io/badge/test_coverage-100%25-brightgreen.svg)](#)
-[![Doc Coverage](https://img.shields.io/badge/doc_coverage-90.8%25-green.svg)](#)
+[![Doc Coverage](https://img.shields.io/badge/doc_coverage-100%25-brightgreen.svg)](#)
 [![API Compliance](https://img.shields.io/badge/api_compliance-100%25-brightgreen.svg)](#)
 
 ## Features & Compliance
 
 `zero-chex` currently achieves **100% API coverage** (75/75 target APIs implemented) of the [chex](https://github.com/google-deepmind/chex) public interface.
 
-- **Test Suite Parity**: The official test suite from `google-deepmind/chex` has been ported directly into this repository. **100% of the relevant official test suite (389 tests) passes perfectly** against `zero-chex`, achieving exact 1-to-1 API parity, including identical exception messages, structure validation, and edge cases.
-- **Backend**: As an API shell, it delegates all structural validation and runtime execution to the [ml-switcheroo-compiler](https://github.com/SamuelMarks/ml-switcheroo-compiler).
-- **Zero Dependencies**: Beyond standard Python libraries and NumPy, it brings no external baggage, replacing the heavy [chex](https://github.com/google-deepmind/chex)/JAX/XLA stack with a lightweight alternative.
+- **Test Suite Parity**: All 75 public APIs from `google-deepmind/chex` are tested in `tests/` with **100% line and branch coverage**, achieving 1-to-1 API parity including exception messages, PyTree structure validation, IEEE-754 ULP comparisons, numerical gradient verification, and edge cases.
+- **Backend**: As an API shell, it delegates structural validation and IR type definitions to [`ml-switcheroo-ir`](https://github.com/SamuelMarks/ml-switcheroo-ir) and [`ml-switcheroo-compiler`](https://github.com/SamuelMarks/ml-switcheroo-compiler).
+- **Zero Dependencies**: Beyond standard Python libraries and `ml-switcheroo-ir`, it brings no external runtime baggage, replacing the heavy [chex](https://github.com/google-deepmind/chex)/JAX/XLA stack with a lightweight pure-Python alternative.
 
 ## Why `zero-chex` Exists
 
@@ -41,7 +41,7 @@ When you execute code using `zero-chex`, it delegates to [`zero-jax`](https://gi
 4. **Tier 4 (Frontends & Add-ons):** Repositories like [`zero-flax`](https://github.com/SamuelMarks/zero-flax), [`zero-optax`](https://github.com/SamuelMarks/zero-optax), and `zero-chex` build on top of [`zero-jax`](https://github.com/SamuelMarks/zero-jax) to provide Neural Network layers, optimizers, and typing without any heavy external dependencies.
 5. **Tier 5 ([`zero-zoo`](https://github.com/SamuelMarks/zero-zoo)):** Headless CI pipelines that train models deterministically to assert float-for-float equivalence ("Golden Seed" testing) across all simulated frameworks.
 
-By maintaining structural API parity with the real [chex](https://github.com/google-deepmind/chex) framework (verified via [`ml-framework-snapshots`](https://github.com/SamuelMarks/ml-framework-snapshots)), `zero-chex` allows users to drop it in as a lightweight substitute in environments where installing the massive official [chex](https://github.com/google-deepmind/chex)/[JAX](https://github.com/google/jax)/[XLA](https://openxla.org/) stack is unfeasible—such as highly constrained serverless functions, or directly inside a web browser natively via [Pyodide](https://pyodide.org/) and [PyScript](https://pyscript.net/).
+By maintaining structural API parity with the real [chex](https://github.com/google-deepmind/chex) framework (verified via [`ml-ecosystem-snapshots`](https://github.com/SamuelMarks/ml-ecosystem-snapshots)), `zero-chex` allows users to drop it in as a lightweight substitute in environments where installing the massive official [chex](https://github.com/google-deepmind/chex)/[JAX](https://github.com/google/jax)/[XLA](https://openxla.org/) stack is unfeasible—such as highly constrained serverless functions, or directly inside a web browser natively via [Pyodide](https://pyodide.org/) and [PyScript](https://pyscript.net/).
 
 ---
 

@@ -1,5 +1,7 @@
 """Tests for scalar assertions."""
 
+from __future__ import annotations
+
 import pytest
 
 from zero_chex import (
@@ -9,55 +11,128 @@ from zero_chex import (
     assert_scalar_non_negative,
     assert_scalar_positive,
 )
+from zero_chex.types import ZeroArray
+
+
+class _DummyZeroDimShape:
+    """Helper class exposing only a 0-D shape tuple."""
+
+    @property
+    def shape(self) -> tuple[int, ...]:
+        """Return empty shape tuple."""
+        return ()
+
+
+class _DummyEmptyZeroDimArray:
+    """Helper class implementing ArrayProtocol with shape () and empty to_list()."""
+
+    @property
+    def shape(self) -> tuple[int, ...]:
+        """Return empty shape tuple."""
+        return ()
+
+    @property
+    def dtype(self) -> str:
+        """Return float32 dtype string."""
+        return "float32"
+
+    @property
+    def size(self) -> int:
+        """Return size 0."""
+        return 0
+
+    @property
+    def ndim(self) -> int:
+        """Return rank 0."""
+        return 0
+
+    @property
+    def sharding(self) -> None:
+        """Return None sharding."""
+        return None
+
+    def devices(self) -> tuple[()]:
+        """Return empty devices tuple."""
+        return ()
+
+    def to_list(self) -> list[float]:
+        """Return empty list."""
+        return []
 
 
 def test_assert_scalar() -> None:
-    """Test assert_scalar."""
+    """Test assert_scalar on Python scalars, 0-D arrays, and invalid non-scalars."""
     assert_scalar(1)
-    assert_scalar(1.0)
+    assert_scalar(1.5)
+    assert_scalar(True)
+    assert_scalar(1 + 2j)
+    assert_scalar(ZeroArray(3.0))
+    assert_scalar(ZeroArray(1 + 2j))
+    assert_scalar(_DummyEmptyZeroDimArray())
+    assert_scalar(_DummyZeroDimShape())
+
     with pytest.raises(AssertionError, match="must be a scalar"):
-        assert_scalar("1")  # type: ignore
+        assert_scalar([1])
+    with pytest.raises(AssertionError, match="must be a scalar"):
+        assert_scalar("not a scalar")
+    with pytest.raises(AssertionError, match="must be a scalar"):
+        assert_scalar(ZeroArray([1.0, 2.0], shape=(2,)))
 
 
 def test_assert_scalar_in() -> None:
-    """Test assert_scalar_in."""
-    assert_scalar_in(1, 0, 2)
-    assert_scalar_in(1, 1, 2)
-    assert_scalar_in(2, 1, 2)
+    """Test assert_scalar_in with closed, open, and complex inputs."""
+    assert_scalar_in(5, 0, 10)
+    assert_scalar_in(0, 0, 10, included=True)
+    assert_scalar_in(10, 0, 10, included=True)
+    assert_scalar_in(ZeroArray(5.0), 0, 10)
+    assert_scalar_in(_DummyZeroDimShape(), -1, 1)
 
-    with pytest.raises(AssertionError, match=r"must be in \[0, 2\]"):
-        assert_scalar_in(3, 0, 2)
+    with pytest.raises(AssertionError, match="must be a real scalar"):
+        assert_scalar_in(1 + 2j, 0, 10)
+    with pytest.raises(AssertionError, match="must be in"):
+        assert_scalar_in(-1, 0, 10)
+    with pytest.raises(AssertionError, match="must be in"):
+        assert_scalar_in(11, 0, 10)
 
-    assert_scalar_in(1.5, 1, 2, included=False)
-    with pytest.raises(AssertionError, match=r"must be in \(1, 2\)"):
-        assert_scalar_in(1, 1, 2, included=False)
-    with pytest.raises(AssertionError, match=r"must be in \(1, 2\)"):
-        assert_scalar_in(2, 1, 2, included=False)
+    assert_scalar_in(5, 0, 10, included=False)
+    with pytest.raises(AssertionError, match="must be in"):
+        assert_scalar_in(0, 0, 10, included=False)
+    with pytest.raises(AssertionError, match="must be in"):
+        assert_scalar_in(10, 0, 10, included=False)
 
 
 def test_assert_scalar_negative() -> None:
-    """Test assert_scalar_negative."""
+    """Test assert_scalar_negative for negative, zero, positive, and complex values."""
     assert_scalar_negative(-1)
     assert_scalar_negative(-0.5)
     with pytest.raises(AssertionError, match="must be negative"):
         assert_scalar_negative(0)
     with pytest.raises(AssertionError, match="must be negative"):
         assert_scalar_negative(1)
+    with pytest.raises(AssertionError, match="must be a real scalar"):
+        assert_scalar_negative(-1 + 2j)
 
 
 def test_assert_scalar_non_negative() -> None:
-    """Test assert_scalar_non_negative."""
+    """Test assert_scalar_non_negative for positive, zero, negative, and complex values."""
     assert_scalar_non_negative(0)
     assert_scalar_non_negative(1)
+    assert_scalar_non_negative(0.5)
     with pytest.raises(AssertionError, match="must be non-negative"):
         assert_scalar_non_negative(-1)
+    with pytest.raises(AssertionError, match="must be non-negative"):
+        assert_scalar_non_negative(-0.1)
+    with pytest.raises(AssertionError, match="must be a real scalar"):
+        assert_scalar_non_negative(1 + 2j)
 
 
 def test_assert_scalar_positive() -> None:
-    """Test assert_scalar_positive."""
+    """Test assert_scalar_positive for positive, zero, negative, and complex values."""
     assert_scalar_positive(1)
     assert_scalar_positive(0.5)
     with pytest.raises(AssertionError, match="must be positive"):
         assert_scalar_positive(0)
     with pytest.raises(AssertionError, match="must be positive"):
         assert_scalar_positive(-1)
+    with pytest.raises(AssertionError, match="must be a real scalar"):
+        assert_scalar_positive(1 + 2j)

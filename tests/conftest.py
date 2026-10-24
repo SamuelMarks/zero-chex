@@ -1,18 +1,15 @@
-import pytest
-import sys
-import os
+"""Pytest configuration for zero_chex test suite."""
 
-sys.path.insert(
-    0,
-    os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "../../ml-switcheroo-compiler/src")
-    ),
-)
-import ml_switcheroo_compiler
+from __future__ import annotations
+
+import pytest
+
+from zero_chex.mocks import clear_trace_counter, enable_asserts, set_n_cpu_devices
 
 
 @pytest.fixture(autouse=True)
-def switcheroo_config():
-    # Unified pytest configuration that imports switcheroo config contexts
-    with ml_switcheroo_compiler.EagerMode():
-        yield
+def reset_chex_state() -> None:
+    """Reset global assertion state, trace counters, and device counts before each test."""
+    enable_asserts()
+    clear_trace_counter()
+    set_n_cpu_devices(1)

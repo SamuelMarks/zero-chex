@@ -1,31 +1,296 @@
-"""Tree utility functions and definitions."""
+"""Pure-Python PyTree traversal, flattening, and custom node registration utilities."""
 
-from zero_jax.tree_util import (
-    tree_all,
-    tree_leaves,
-    tree_map,
-    tree_structure,
+from __future__ import annotations
+
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from typing import Protocol, TypeVar
+
+from typing_extensions import TypeGuard
+
+from zero_chex.types import (
+    ArrayProtocol,
+    DeviceProtocol,
+    DevicesMethodProtocol,
+    DTypeAttrProtocol,
+    LeafValue,
+    MappableDataclassProtocol,
+    PyTree,
+    PyTreeDef,
+    ShapeOnlyProtocol,
+    ShardingAttrProtocol,
 )
 
-__all__ = [
-    "tree_all",
-    "tree_leaves",
-    "tree_map",
-    "tree_structure",
-    "tree_flatten_with_path",
-]
+FlattenFn = Callable[[MappableDataclassProtocol], tuple[tuple[PyTree, ...], tuple[str, ...]]]
+UnflattenFn = Callable[[tuple[str, ...], tuple[PyTree, ...]], PyTree]
 
 
-def tree_flatten_with_path(tree):
-    """Flattens a tree into a list of (path, leaf) pairs and a tree structure.
+class TreeMapCallable(Protocol):
+    """Protocol for callables passed to tree_map."""
+
+    def __call__(self, *leaves: LeafValue) -> LeafValue:
+        """Transform one or more corresponding PyTree leaf values.
+
+        Args:
+            *leaves: Corresponding leaf values across input PyTrees.
+
+        Returns:
+            Transformed leaf value.
+        """
+        ...
+
+
+TCls = TypeVar("TCls")
+_CUSTOM_PYTREE_NODES: dict[int, tuple[FlattenFn, UnflattenFn]] = {}
+
+
+def register_custom_pytree_node(
+    cls: type[TCls],
+    flatten_fn: FlattenFn,
+    unflatten_fn: UnflattenFn,
+) -> None:
+    """Register a custom dataclass type for PyTree traversal.
 
     Args:
-        tree: The nested tree structure to flatten.
+        cls: The class type to register as an internal PyTree container node.
+        flatten_fn: Callable extracting child values and field names from an instance.
+        unflatten_fn: Callable reconstructing an instance from field names and child values.
+    """
+    _CUSTOM_PYTREE_NODES[id(cls)] = (flatten_fn, unflatten_fn)
+
+
+def _is_leaf_value(node: PyTree) -> TypeGuard[LeafValue]:
+    """Determine whether a node is a terminal PyTree leaf.
+
+    Args:
+        node: The PyTree element to inspect.
+
+    Returns:
+        True if node is a leaf value rather than a traversable container.
+    """
+    if isinstance(node, MappableDataclassProtocol):
+        return False
+    if isinstance(node, (ArrayProtocol, ShapeOnlyProtocol)):
+        return True
+    if isinstance(node, (list, tuple, Mapping)):
+        return False
+    return isinstance(
+        node,
+        (
+            int,
+            float,
+            complex,
+            bool,
+            str,
+            type(None),
+            DeviceProtocol,
+            DevicesMethodProtocol,
+            ShardingAttrProtocol,
+            DTypeAttrProtocol,
+        ),
+    )
+
+
+def tree_flatten_with_path(
+    tree: PyTree,
+) -> tuple[list[tuple[tuple[str | int, ...], LeafValue]], PyTreeDef]:
+    """Flatten a PyTree into a list of (path, leaf) pairs and a PyTreeDef structure.
+
+    Args:
+        tree: The nested PyTree structure to flatten.
 
     Returns:
         A tuple containing:
-            - A list of tuples, where each tuple is (None, leaf_value). The path is currently always None.
-            - None, representing the tree structure (currently simplified).
+            - A list of (key_path_tuple, leaf_value) pairs.
+            - The PyTreeDef structural descriptor.
     """
-    leaves = tree_leaves(tree)
-    return [(None, leaf) for leaf in leaves], None
+    leaves_with_paths: list[tuple[tuple[str | int, ...], LeafValue]] = []
+
+    def _visit(node: PyTree, path: tuple[str | int, ...]) -> PyTreeDef:
+        """Recursively visit a PyTree node and collect path-annotated leaves.
+
+        Args:
+            node: Current subtree or leaf node.
+            path: Accumulated key/index path from the root.
+
+        Returns:
+            PyTreeDef describing the visited subtree.
+        """
+        if isinstance(node, MappableDataclassProtocol):
+            node_cls = type(node)
+            cls_id = id(node_cls)
+            if cls_id in _CUSTOM_PYTREE_NODES:
+                flatten_fn, _ = _CUSTOM_PYTREE_NODES[cls_id]
+                children_vals, field_names = flatten_fn(node)
+            else:
+                field_names = node.__chex_mappable_fields__()
+                children_vals = node.__chex_field_values__()
+            child_defs = tuple(
+                _visit(child_val, path + (field_name,)) for field_name, child_val in zip(field_names, children_vals)
+            )
+            return PyTreeDef(
+                node_type="custom",
+                keys=field_names,
+                children=child_defs,
+                custom_cls=node_cls,
+            )
+
+        if not _is_leaf_value(node):
+            if isinstance(node, Mapping):
+                sorted_keys = tuple(sorted(node.keys(), key=str))
+                child_defs = tuple(_visit(node[k], path + (k,)) for k in sorted_keys)
+                return PyTreeDef(node_type="dict", keys=sorted_keys, children=child_defs)
+            if isinstance(node, list):
+                child_defs = tuple(_visit(item, path + (idx,)) for idx, item in enumerate(node))
+                return PyTreeDef(
+                    node_type="list",
+                    keys=tuple(range(len(node))),
+                    children=child_defs,
+                )
+            if isinstance(node, tuple):
+                child_defs = tuple(_visit(item, path + (idx,)) for idx, item in enumerate(node))
+                return PyTreeDef(
+                    node_type="tuple",
+                    keys=tuple(range(len(node))),
+                    children=child_defs,
+                )
+
+        if _is_leaf_value(node):
+            leaves_with_paths.append((path, node))
+        return PyTreeDef(node_type="leaf")
+
+    treedef = _visit(tree, ())
+    return leaves_with_paths, treedef
+
+
+def tree_flatten(tree: PyTree) -> tuple[list[LeafValue], PyTreeDef]:
+    """Flatten a PyTree into a list of leaves and a PyTreeDef structure.
+
+    Args:
+        tree: The nested PyTree structure to flatten.
+
+    Returns:
+        A tuple of (leaves_list, PyTreeDef).
+    """
+    path_leaves, treedef = tree_flatten_with_path(tree)
+    return [leaf for _, leaf in path_leaves], treedef
+
+
+def tree_leaves(tree: PyTree) -> list[LeafValue]:
+    """Extract all leaves from a PyTree in deterministic traversal order.
+
+    Args:
+        tree: The PyTree structure to extract leaves from.
+
+    Returns:
+        A list of leaf values.
+    """
+    leaves, _ = tree_flatten(tree)
+    return leaves
+
+
+def tree_structure(tree: PyTree) -> PyTreeDef:
+    """Compute the structural PyTreeDef descriptor for a PyTree.
+
+    Args:
+        tree: The PyTree structure to inspect.
+
+    Returns:
+        The PyTreeDef representing the container hierarchy of tree.
+    """
+    _, treedef = tree_flatten(tree)
+    return treedef
+
+
+def tree_unflatten(treedef: PyTreeDef, leaves: Iterable[LeafValue]) -> PyTree:
+    """Reconstruct a PyTree from a PyTreeDef and an iterable of leaves.
+
+    Args:
+        treedef: Structural PyTreeDef descriptor.
+        leaves: Sequence or iterable of leaf values.
+
+    Returns:
+        Reconstructed PyTree matching treedef.
+    """
+    leaf_iter: Iterator[LeafValue] = iter(leaves)
+
+    def _build(current_def: PyTreeDef) -> PyTree:
+        """Recursively reconstruct a subtree from a PyTreeDef node.
+
+        Args:
+            current_def: Current PyTreeDef node.
+
+        Returns:
+            Reconstructed subtree or leaf value.
+        """
+        if current_def.node_type == "leaf":
+            return next(leaf_iter)
+        built_children = tuple(_build(child) for child in current_def.children)
+        if current_def.node_type == "list":
+            return list(built_children)
+        if current_def.node_type == "tuple":
+            return built_children
+        if current_def.node_type == "dict":
+            return {str(k): child_val for k, child_val in zip(current_def.keys, built_children)}
+        if current_def.custom_cls is not None:
+            custom_cls = current_def.custom_cls
+            cls_id = id(custom_cls)
+            if cls_id in _CUSTOM_PYTREE_NODES:
+                _, unflatten_fn = _CUSTOM_PYTREE_NODES[cls_id]
+                str_keys = tuple(str(k) for k in current_def.keys)
+                return unflatten_fn(str_keys, built_children)
+            kwargs = {str(k): child_val for k, child_val in zip(current_def.keys, built_children)}
+            return custom_cls(**kwargs)
+        return built_children
+
+    return _build(treedef)
+
+
+def tree_map(
+    fn: TreeMapCallable,
+    tree: PyTree,
+    *rest: PyTree,
+) -> PyTree:
+    """Map a function over all corresponding leaves of one or more PyTrees.
+
+    Args:
+        fn: Callable applied to each leaf (or tuple of leaves across trees).
+        tree: Primary PyTree determining structure.
+        *rest: Additional PyTrees with identical structure.
+
+    Returns:
+        A new PyTree with the same structure as tree and transformed leaves.
+    """
+    leaves0, treedef = tree_flatten(tree)
+    if not rest:
+        mapped_leaves = [fn(leaf) for leaf in leaves0]
+    else:
+        rest_leaves = [tree_leaves(other) for other in rest]
+        mapped_leaves = [fn(*leaf_group) for leaf_group in zip(leaves0, *rest_leaves)]
+    return tree_unflatten(treedef, mapped_leaves)
+
+
+def tree_all(tree: PyTree) -> bool:
+    """Check whether all leaves in a PyTree evaluate to True.
+
+    Args:
+        tree: The PyTree whose leaves are evaluated for truthiness.
+
+    Returns:
+        True if every leaf in the tree is truthy, False otherwise.
+    """
+    return all(bool(leaf) for leaf in tree_leaves(tree))
+
+
+__all__ = [
+    "FlattenFn",
+    "TreeMapCallable",
+    "UnflattenFn",
+    "register_custom_pytree_node",
+    "tree_all",
+    "tree_flatten",
+    "tree_flatten_with_path",
+    "tree_leaves",
+    "tree_map",
+    "tree_structure",
+    "tree_unflatten",
+]

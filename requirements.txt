@@ -1,3 +1,4 @@
-zero-keras
-ml-switcheroo-compiler
-zero-jax
+ml-switcheroo-ir @ git+https://github.com/SamuelMarks/ml-switcheroo-ir.git@master
+ml-ecosystem-snapshots @ https://github.com/SamuelMarks/ml-ecosystem-snapshots/releases/download/v0.0.4/ml_ecosystem_snapshots-0.0.4-py3-none-any.whl
+pydantic
+cdd-python

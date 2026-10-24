@@ -1,18 +1,30 @@
+"""Verify that all functions in chex_api_snapshot.json are exercised in tests/."""
+
+from __future__ import annotations
+
 import ast
-import os
 import json
+import os
 import sys
 
 
-def get_called_names(node):
-    called = set()
+def get_called_names(node: ast.AST) -> set[str]:
+    """Collect all function and decorator names referenced within an AST subtree.
+
+    Args:
+        node: The root AST node to walk.
+
+    Returns:
+        A set of called function and decorator identifier names.
+    """
+    called: set[str] = set()
     for child in ast.walk(node):
         if isinstance(child, ast.Call):
             if isinstance(child.func, ast.Name):
                 called.add(child.func.id)
             elif isinstance(child.func, ast.Attribute):
                 called.add(child.func.attr)
-        elif isinstance(child, ast.FunctionDef) or isinstance(child, ast.ClassDef):
+        elif isinstance(child, (ast.FunctionDef, ast.ClassDef)):
             for dec in child.decorator_list:
                 if isinstance(dec, ast.Name):
                     called.add(dec.id)
@@ -26,52 +38,38 @@ def get_called_names(node):
     return called
 
 
-def main():
-    with open("chex_api_snapshot.json", "r") as f:
-        api = json.load(f)
+def main() -> None:
+    """Check that every function in chex_api_snapshot.json is called in tests/."""
+    with open("chex_api_snapshot.json", encoding="utf-8") as file_handle:
+        api: dict[str, dict[str, str]] = json.load(file_handle)
 
-    funcs = {k for k, v in api.items() if v["kind"] == "function"}
-
-    # functions that we don't strictly require testing if they are weird aliases or so.
-    # but let's see what fails first.
+    funcs = {k for k, v in api.items() if v.get("kind") == "function"}
 
     tests_dir = "tests"
-    covered = set()
+    covered: set[str] = set()
 
     for root, _, files in os.walk(tests_dir):
         for file in files:
             if file.endswith(".py"):
                 path = os.path.join(root, file)
-                with open(path, "r") as f:
+                with open(path, encoding="utf-8") as file_handle:
                     try:
-                        tree = ast.parse(f.read(), filename=path)
+                        tree = ast.parse(file_handle.read(), filename=path)
                         for node in ast.walk(tree):
-                            if isinstance(
-                                node, ast.FunctionDef
-                            ) and node.name.startswith("test_"):
+                            if isinstance(node, ast.FunctionDef) and node.name.startswith("test_"):
                                 called = get_called_names(node)
                                 covered.update(called.intersection(funcs))
-                            elif isinstance(
-                                node, ast.ClassDef
-                            ) and node.name.startswith("Test"):
-                                # some might just call inside class? Tests are usually functions.
-                                pass
                             elif isinstance(node, ast.Module):
-                                # actually, maybe we should just look at all calls in the file
-                                # wait, the prompt says "a test inside tests/ that calls it"
-                                # Let's just collect all calls inside test files.
-                                covered.update(
-                                    get_called_names(node).intersection(funcs)
-                                )
-                    except Exception as e:
-                        print(f"Failed to parse {path}: {e}")
+                                covered.update(get_called_names(node).intersection(funcs))
+                    except SyntaxError as exc:
+                        print(f"Failed to parse {path}: {exc}")
 
     missing = funcs - covered
 
     if missing:
         print("Missing tests for:")
-        for m in sorted(missing):
-            print(" -", m)
+        for item in sorted(missing):
+            print(" -", item)
         sys.exit(1)
     else:
         print("Test Parity Check Passed!")

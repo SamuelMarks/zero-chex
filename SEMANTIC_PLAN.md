@@ -2,7 +2,7 @@
 
 ## What Does "Implemented" Mean Currently?
 Thus far, **"Implemented" only meant Structural Compliance (API Parity).** 
-By passing the `ml-framework-snapshots` check, we guaranteed that `zero-chex` exposes the exact same modules, classes, functions, arguments, default values, and type hints as the real `chex` library. This ensures that any downstream library importing `chex` (via our `zero_chex` alias) will not crash due to `AttributeError` or `TypeError` during import or standard invocation. 
+By passing the `ml-ecosystem-snapshots` check, we guaranteed that `zero-chex` exposes the exact same modules, classes, functions, arguments, default values, and type hints as the real `chex` library. This ensures that any downstream library importing `chex` (via our `zero_chex` alias) will not crash due to `AttributeError` or `TypeError` during import or standard invocation. 
 
 **However, we have not achieved Semantic or Mathematical Parity.** 
 Currently, the internal logic of these functions uses standard `numpy`, `unittest`, or mock objects to pass structural coverage requirements. 

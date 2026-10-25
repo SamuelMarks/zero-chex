@@ -218,3 +218,9 @@ def test_pytreedef_methods() -> None:
     assert node != "not_a_treedef"
     assert hash(node) == hash(node_same)
     assert "PyTreeDef(dict" in repr(node)
+
+    from zero_chex._src import pytypes
+
+    assert pytypes.Device is Device
+    assert pytypes.PyTreeDef is PyTreeDef
+    assert pytypes.ArrayNumpy is ArrayNumpy

@@ -787,6 +787,40 @@ def with_jittable_assertions(
     return chexify(fn, async_check=async_check, errors=errors)
 
 
+@overload
+def ify(
+    fn: Callable[P, R],
+    async_check: bool = True,
+    errors: frozenset[str] = ChexifyChecks.user,
+) -> ChexifiedFunction[P, R]: ...
+
+
+@overload
+def ify(
+    fn: None = None,
+    async_check: bool = True,
+    errors: frozenset[str] = ChexifyChecks.user,
+) -> Callable[[Callable[P, R]], ChexifiedFunction[P, R]]: ...
+
+
+def ify(
+    fn: Callable[P, R] | None = None,
+    async_check: bool = True,
+    errors: frozenset[str] = ChexifyChecks.user,
+) -> ChexifiedFunction[P, R] | Callable[[Callable[P, R]], ChexifiedFunction[P, R]]:
+    """Wrap a function to enable Chex assertions inside JIT-compiled code (canonical alias for chexify).
+
+    Args:
+        fn: The function to wrap, or None when called with keyword arguments.
+        async_check: Whether checks should be performed asynchronously.
+        errors: Frozenset of ChexifyChecks categories to validate.
+
+    Returns:
+        A ChexifiedFunction wrapping fn or a decorator returning a ChexifiedFunction.
+    """
+    return chexify(fn, async_check=async_check, errors=errors)
+
+
 def block_until_chexify_assertions_complete() -> None:
     """Wait until all pending asynchronous chexify assertions have finished and raise if any failed.
 
@@ -984,11 +1018,50 @@ def _grad_to_float_lists(
     return [_pytree_to_float_list(raw_grad)]
 
 
+def _raise_grad_error(
+    default_msg: str,
+    *,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
+) -> None:
+    """Format and raise an assertion error for assert_numerical_grads.
+
+    Args:
+        default_msg: Default assertion failure message.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include default_msg alongside custom_message.
+        exception_type: Exception class to instantiate and raise.
+
+    Raises:
+        Exception: An instance of exception_type with the formatted message.
+    """
+    if custom_message is not None:
+        formatted_custom = (
+            custom_message.format(*custom_message_format_vars) if custom_message_format_vars else custom_message
+        )
+        final_msg = (
+            f"{default_msg} [{formatted_custom}]"
+            if include_default_message
+            else f"[Chex] Assertion failed: {formatted_custom}"
+        )
+    else:
+        final_msg = default_msg
+    raise exception_type(final_msg)
+
+
 def assert_numerical_grads(
     f: DifferentiableCallable,
     f_args: Sequence[PyTree],
     order: int = 1,
     atol: float = 0.01,
+    *,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
     **check_kwargs: float,
 ) -> None:
     """Assert that analytical and finite-difference numerical derivatives match within tolerance.
@@ -998,25 +1071,41 @@ def assert_numerical_grads(
         f_args: Sequence of input PyTree arguments at which to evaluate derivatives.
         order: Order of differentiation (must be >= 1).
         atol: Absolute tolerance for gradient comparison.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
         **check_kwargs: Optional extra tolerance parameters (e.g., eps, rtol).
 
     Raises:
         ValueError: If order is less than 1.
-        AssertionError: If evaluated gradients are non-finite or mismatch analytical gradients.
+        Exception: If evaluated gradients are non-finite or mismatch analytical gradients.
     """
     if not _STATE.enabled:
         return
     if order < 1:
         raise ValueError("Differentiation order must be at least 1.")
     if atol < 0.0:
-        raise AssertionError(f"Tolerance atol must be non-negative, got {atol}.")
+        _raise_grad_error(
+            f"Tolerance atol must be non-negative, got {atol}.",
+            custom_message=custom_message,
+            custom_message_format_vars=custom_message_format_vars,
+            include_default_message=include_default_message,
+            exception_type=exception_type,
+        )
 
     eps = check_kwargs.get("eps", 1e-4)
     rtol = check_kwargs.get("rtol", 1e-2)
     base_out = _invoke_differentiable(f, f_args)
     base_scalars = _pytree_to_float_list(base_out)
     if any(not math.isfinite(v) for v in base_scalars):
-        raise AssertionError("Function output contains non-finite values at base arguments.")
+        _raise_grad_error(
+            "Function output contains non-finite values at base arguments.",
+            custom_message=custom_message,
+            custom_message_format_vars=custom_message_format_vars,
+            include_default_message=include_default_message,
+            exception_type=exception_type,
+        )
 
     explicit_grads: list[list[float]] | None = None
     if isinstance(f, AnalyticalGradCallableProtocol):
@@ -1049,8 +1138,12 @@ def assert_numerical_grads(
 
             fd_grad = _compute_nth_fd_derivative(_eval_single, x0, order, eps)
             if not math.isfinite(fd_grad):
-                raise AssertionError(
-                    f"Numerical gradient is non-finite ({fd_grad}) at arg {arg_idx}, index {elem_idx}."
+                _raise_grad_error(
+                    f"Numerical gradient is non-finite ({fd_grad}) at arg {arg_idx}, index {elem_idx}.",
+                    custom_message=custom_message,
+                    custom_message_format_vars=custom_message_format_vars,
+                    include_default_message=include_default_message,
+                    exception_type=exception_type,
                 )
 
             if explicit_grads is not None and arg_idx < len(explicit_grads):
@@ -1059,13 +1152,21 @@ def assert_numerical_grads(
                 ad_grad = _compute_autodiff_nth_derivative(f, f_args, arg_idx, elem_idx, x0, order, eps)
 
             if not math.isfinite(ad_grad):
-                raise AssertionError(
-                    f"Analytical gradient is non-finite ({ad_grad}) at arg {arg_idx}, index {elem_idx}."
+                _raise_grad_error(
+                    f"Analytical gradient is non-finite ({ad_grad}) at arg {arg_idx}, index {elem_idx}.",
+                    custom_message=custom_message,
+                    custom_message_format_vars=custom_message_format_vars,
+                    include_default_message=include_default_message,
+                    exception_type=exception_type,
                 )
             if abs(ad_grad - fd_grad) > atol + rtol * abs(fd_grad):
-                raise AssertionError(
+                _raise_grad_error(
                     f"Gradient mismatch at arg {arg_idx}[{elem_idx}]: "
-                    f"analytical={ad_grad}, numerical={fd_grad}, atol={atol}."
+                    f"analytical={ad_grad}, numerical={fd_grad}, atol={atol}.",
+                    custom_message=custom_message,
+                    custom_message_format_vars=custom_message_format_vars,
+                    include_default_message=include_default_message,
+                    exception_type=exception_type,
                 )
 
 
@@ -1326,6 +1427,7 @@ __all__ = [
     "fake_pmap",
     "fake_pmap_and_jit",
     "get_num_devices_available",
+    "ify",
     "restrict_backends",
     "set_n_cpu_devices",
     "with_jittable_assertions",

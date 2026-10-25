@@ -2,11 +2,11 @@ repos:
   - repo: local
     hooks:
       - id: check-deps
-        name: Check 3rd-party dependencies
+        name: Check 3rd-party dependencies, typing, and docstrings
         entry: python3 scripts/check_3rdparty_deps.py
         language: system
         types: [python]
-        files: ^src/
+        files: ^(src|tests|scripts)/
         pass_filenames: true
 
       - id: ruff-format
@@ -55,7 +55,7 @@ repos:
         name: Check API Conformance
         entry: env PYTHONPATH=src:../ml-switcheroo-ir/src:../ml-switcheroo-compiler/src:../ml-ecosystem-snapshots/src:../zero-jax/src:../zero-flax/src:../zero-grain/src:../zero-optax/src:../zero-orbax/src python3 scripts/check_compliance.py
         language: system
-        files: ^(SEMANTIC_PLAN\.md|src/.*\.py)$
+        files: ^(CHEX_TODO\.md|SEMANTIC_PLAN\.md|TODO_PLAN\.md|src/.*\.py|scripts/check_compliance\.py)$
         pass_filenames: false
 
       - id: check-api-parity

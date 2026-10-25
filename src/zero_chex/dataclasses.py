@@ -176,6 +176,28 @@ class MappableDataclassMixin(collections.abc.Mapping[str, PyTree]):
         cls_type = type(self)
         return cls_type(**field_map)
 
+    def to_tuple(self) -> tuple[tuple[PyTree, ...], tuple[str, ...]]:
+        """Convert the dataclass instance into a tuple of (field_values, field_names).
+
+        Returns:
+            Tuple of (field_values, field_names).
+        """
+        return self.__chex_field_values__(), self.__chex_mappable_fields__()
+
+    @classmethod
+    def from_tuple(cls: type[T], args: tuple[tuple[PyTree, ...], tuple[str, ...]]) -> T:
+        """Reconstruct a dataclass instance from a (field_values, field_names) tuple.
+
+        Args:
+            args: Tuple of (field_values, field_names) produced by to_tuple().
+
+        Returns:
+            Reconstructed dataclass instance.
+        """
+        values, keys = args
+        kwargs = dict(zip(keys, values))
+        return cls(**kwargs)
+
 
 def _make_kw_only_dataclass(cls: type[T]) -> type[T]:
     """Create a keyword-only subclass of a dataclass without mutating cls.__init__ in-place.

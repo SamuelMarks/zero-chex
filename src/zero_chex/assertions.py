@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Mapping, Sequence
-from typing import Union
+from typing import NoReturn, Union
 
 from ml_switcheroo_ir import DType, ShapeMismatchError, TensorShape, TensorSpec, broadcast_shapes
 from typing_extensions import TypeGuard
@@ -23,6 +23,7 @@ from zero_chex.types import (
     MappableDataclassProtocol,
     NamedTuplePyTreeProtocol,
     PyTree,
+    Scalar,
     ShapeOnlyProtocol,
     SharedMemoryArray,
     StateMappingProtocol,
@@ -31,6 +32,40 @@ from zero_chex.types import (
     VariableLeafProtocol,
     _has_valid_shape_tuple,
 )
+
+
+def _raise_chex_error(
+    default_msg: str,
+    *,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
+) -> NoReturn:
+    """Format and raise a Chex assertion error with optional custom message and exception type.
+
+    Args:
+        default_msg: The standard failure message produced by the assertion.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include default_msg alongside custom_message.
+        exception_type: Exception class to instantiate and raise.
+
+    Raises:
+        Exception: An instance of exception_type with the formatted message.
+    """
+    if custom_message is not None:
+        formatted_custom = (
+            custom_message.format(*custom_message_format_vars) if custom_message_format_vars else custom_message
+        )
+        final_msg = (
+            f"{default_msg} [{formatted_custom}]"
+            if include_default_message
+            else f"[Chex] Assertion failed: {formatted_custom}"
+        )
+    else:
+        final_msg = default_msg
+    raise exception_type(final_msg)
 
 
 def _get_shape(x: PyTree) -> tuple[int, ...]:
@@ -204,89 +239,176 @@ def _is_pytree_container(inputs: ArrayTree) -> bool:
     return False
 
 
-def assert_equal(first: PyTree, second: PyTree) -> None:
+def assert_equal(
+    first: PyTree,
+    second: PyTree,
+    *,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
+) -> None:
     """Assert that two objects or values are equal.
 
     Args:
         first: The first value to compare.
         second: The second value to compare.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
 
     Raises:
-        AssertionError: If assertions are enabled and first != second.
+        Exception: If assertions are enabled and first != second.
     """
     if not are_asserts_enabled():
         return
     if first != second:
-        raise AssertionError(f"Assertion failed: {first!r} != {second!r}")
+        _raise_chex_error(
+            f"Assertion failed: {first!r} != {second!r}",
+            custom_message=custom_message,
+            custom_message_format_vars=custom_message_format_vars,
+            include_default_message=include_default_message,
+            exception_type=exception_type,
+        )
 
 
-def assert_exactly_one_is_none(first: PyTree, second: PyTree) -> None:
+def assert_exactly_one_is_none(
+    first: PyTree,
+    second: PyTree,
+    *,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
+) -> None:
     """Assert that one and only one of the two arguments is None.
 
     Args:
         first: The first argument to check.
         second: The second argument to check.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
 
     Raises:
-        AssertionError: If both arguments are None or neither is None.
+        Exception: If both arguments are None or neither is None.
     """
     if not are_asserts_enabled():
         return
     if (first is None) == (second is None):
-        raise AssertionError(f"One and exactly one of ({first!r}, {second!r}) must be None.")
+        _raise_chex_error(
+            f"One and exactly one of ({first!r}, {second!r}) must be None.",
+            custom_message=custom_message,
+            custom_message_format_vars=custom_message_format_vars,
+            include_default_message=include_default_message,
+            exception_type=exception_type,
+        )
 
 
-def assert_not_both_none(first: PyTree, second: PyTree) -> None:
+def assert_not_both_none(
+    first: PyTree,
+    second: PyTree,
+    *,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
+) -> None:
     """Assert that at least one of the two arguments is not None.
 
     Args:
         first: The first argument to check.
         second: The second argument to check.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
 
     Raises:
-        AssertionError: If both first and second are None.
+        Exception: If both first and second are None.
     """
     if not are_asserts_enabled():
         return
     if first is None and second is None:
-        raise AssertionError("At least one of the arguments must be different from None.")
+        _raise_chex_error(
+            "At least one of the arguments must be different from None.",
+            custom_message=custom_message,
+            custom_message_format_vars=custom_message_format_vars,
+            include_default_message=include_default_message,
+            exception_type=exception_type,
+        )
 
 
 def assert_is_broadcastable(
     shape_a: Sequence[int],
     shape_b: Sequence[int],
+    *,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
 ) -> None:
     """Assert that two shape tuples are compatible under NumPy/IR broadcasting rules.
 
     Args:
         shape_a: First shape sequence of integers.
         shape_b: Second shape sequence of integers.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
 
     Raises:
-        AssertionError: If shape_a and shape_b cannot be broadcast together.
+        Exception: If shape_a and shape_b cannot be broadcast together.
     """
     if not are_asserts_enabled():
         return
     try:
         broadcast_shapes(tuple(shape_a), tuple(shape_b))
-    except (ShapeMismatchError, ValueError) as exc:
-        raise AssertionError(f"Shapes {shape_a!r} and {shape_b!r} are not broadcastable.") from exc
+    except (ShapeMismatchError, ValueError):
+        _raise_chex_error(
+            f"Shapes {shape_a!r} and {shape_b!r} are not broadcastable.",
+            custom_message=custom_message,
+            custom_message_format_vars=custom_message_format_vars,
+            include_default_message=include_default_message,
+            exception_type=exception_type,
+        )
 
 
-def assert_is_divisible(numerator: int, denominator: int) -> None:
+def assert_is_divisible(
+    numerator: int,
+    denominator: int,
+    *,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
+) -> None:
     """Assert that numerator is an exact integer multiple of denominator.
 
     Args:
         numerator: Dividend integer.
         denominator: Divisor integer.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
 
     Raises:
-        AssertionError: If denominator is 0 or numerator % denominator != 0.
+        Exception: If denominator is 0 or numerator % denominator != 0.
     """
     if not are_asserts_enabled():
         return
     if denominator == 0 or numerator % denominator != 0:
-        raise AssertionError(f"{numerator} is not divisible by {denominator}.")
+        _raise_chex_error(
+            f"{numerator} is not divisible by {denominator}.",
+            custom_message=custom_message,
+            custom_message_format_vars=custom_message_format_vars,
+            include_default_message=include_default_message,
+            exception_type=exception_type,
+        )
 
 
 def assert_axis_dimension_comparator(
@@ -294,6 +416,11 @@ def assert_axis_dimension_comparator(
     axis: int,
     pass_fn: Callable[[int], bool],
     error_string: str = "",
+    *,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
 ) -> None:
     """Assert that a specific axis of tensor satisfies a predicate pass_fn.
 
@@ -301,126 +428,238 @@ def assert_axis_dimension_comparator(
         tensor: The array-like object to inspect.
         axis: The axis index (supports negative indexing).
         pass_fn: Predicate callable taking the integer dimension size and returning bool.
-        error_string: Optional description included in the AssertionError message.
+        error_string: Optional description included in the error message.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
 
     Raises:
-        AssertionError: If axis is out of bounds or pass_fn(shape[axis]) returns False.
+        Exception: If axis is out of bounds or pass_fn(shape[axis]) returns False.
     """
     if not are_asserts_enabled():
         return
     shape = _get_shape(tensor)
     if axis >= len(shape) or axis < -len(shape):
-        raise AssertionError(f"Axis {axis} out of bounds for tensor of rank {len(shape)}.")
+        _raise_chex_error(
+            f"Axis {axis} out of bounds for tensor of rank {len(shape)}.",
+            custom_message=custom_message,
+            custom_message_format_vars=custom_message_format_vars,
+            include_default_message=include_default_message,
+            exception_type=exception_type,
+        )
     dim = shape[axis]
     if not pass_fn(dim):
         detail = f" ({error_string})" if error_string else ""
-        raise AssertionError(f"Expected tensor to have dimension{detail} on axis {axis} but got {dim}.")
+        _raise_chex_error(
+            f"Expected tensor to have dimension{detail} on axis {axis} but got {dim}.",
+            custom_message=custom_message,
+            custom_message_format_vars=custom_message_format_vars,
+            include_default_message=include_default_message,
+            exception_type=exception_type,
+        )
 
 
-def assert_axis_dimension(tensor: ArrayTree, axis: int, expected: int) -> None:
+def assert_axis_dimension(
+    tensor: ArrayTree,
+    axis: int,
+    expected: int,
+    *,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
+) -> None:
     """Assert that a specific axis of tensor has dimension equal to expected.
 
     Args:
         tensor: The array-like object to inspect.
         axis: The axis index to check.
         expected: The expected integer size of the axis.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
 
     Raises:
-        AssertionError: If axis is out of bounds or shape[axis] != expected.
+        Exception: If axis is out of bounds or shape[axis] != expected.
     """
     assert_axis_dimension_comparator(
         tensor,
         axis,
         lambda dim: dim == expected,
         error_string=f"equal to {expected}",
+        custom_message=custom_message,
+        custom_message_format_vars=custom_message_format_vars,
+        include_default_message=include_default_message,
+        exception_type=exception_type,
     )
 
 
-def assert_axis_dimension_gt(tensor: ArrayTree, axis: int, val: int) -> None:
+def assert_axis_dimension_gt(
+    tensor: ArrayTree,
+    axis: int,
+    val: int,
+    *,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
+) -> None:
     """Assert that a specific axis of tensor has dimension strictly greater than val.
 
     Args:
         tensor: The array-like object to inspect.
         axis: The axis index to check.
         val: Lower bound (exclusive) for the axis dimension.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
 
     Raises:
-        AssertionError: If axis is out of bounds or shape[axis] <= val.
+        Exception: If axis is out of bounds or shape[axis] <= val.
     """
     assert_axis_dimension_comparator(
         tensor,
         axis,
         lambda dim: dim > val,
         error_string=f"greater than {val}",
+        custom_message=custom_message,
+        custom_message_format_vars=custom_message_format_vars,
+        include_default_message=include_default_message,
+        exception_type=exception_type,
     )
 
 
-def assert_axis_dimension_gteq(tensor: ArrayTree, axis: int, val: int) -> None:
+def assert_axis_dimension_gteq(
+    tensor: ArrayTree,
+    axis: int,
+    val: int,
+    *,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
+) -> None:
     """Assert that a specific axis of tensor has dimension greater than or equal to val.
 
     Args:
         tensor: The array-like object to inspect.
         axis: The axis index to check.
         val: Lower bound (inclusive) for the axis dimension.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
 
     Raises:
-        AssertionError: If axis is out of bounds or shape[axis] < val.
+        Exception: If axis is out of bounds or shape[axis] < val.
     """
     assert_axis_dimension_comparator(
         tensor,
         axis,
         lambda dim: dim >= val,
         error_string=f"greater than or equal to {val}",
+        custom_message=custom_message,
+        custom_message_format_vars=custom_message_format_vars,
+        include_default_message=include_default_message,
+        exception_type=exception_type,
     )
 
 
-def assert_axis_dimension_lt(tensor: ArrayTree, axis: int, val: int) -> None:
+def assert_axis_dimension_lt(
+    tensor: ArrayTree,
+    axis: int,
+    val: int,
+    *,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
+) -> None:
     """Assert that a specific axis of tensor has dimension strictly less than val.
 
     Args:
         tensor: The array-like object to inspect.
         axis: The axis index to check.
         val: Upper bound (exclusive) for the axis dimension.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
 
     Raises:
-        AssertionError: If axis is out of bounds or shape[axis] >= val.
+        Exception: If axis is out of bounds or shape[axis] >= val.
     """
     assert_axis_dimension_comparator(
         tensor,
         axis,
         lambda dim: dim < val,
         error_string=f"less than {val}",
+        custom_message=custom_message,
+        custom_message_format_vars=custom_message_format_vars,
+        include_default_message=include_default_message,
+        exception_type=exception_type,
     )
 
 
-def assert_axis_dimension_lteq(tensor: ArrayTree, axis: int, val: int) -> None:
+def assert_axis_dimension_lteq(
+    tensor: ArrayTree,
+    axis: int,
+    val: int,
+    *,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
+) -> None:
     """Assert that a specific axis of tensor has dimension less than or equal to val.
 
     Args:
         tensor: The array-like object to inspect.
         axis: The axis index to check.
         val: Upper bound (inclusive) for the axis dimension.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
 
     Raises:
-        AssertionError: If axis is out of bounds or shape[axis] > val.
+        Exception: If axis is out of bounds or shape[axis] > val.
     """
     assert_axis_dimension_comparator(
         tensor,
         axis,
         lambda dim: dim <= val,
         error_string=f"less than or equal to {val}",
+        custom_message=custom_message,
+        custom_message_format_vars=custom_message_format_vars,
+        include_default_message=include_default_message,
+        exception_type=exception_type,
     )
 
 
-def assert_equal_rank(inputs: Sequence[ArrayTree] | ArrayTree) -> None:
+def assert_equal_rank(
+    inputs: Sequence[ArrayTree] | ArrayTree,
+    *,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
+) -> None:
     """Assert that all arrays in inputs have the same rank.
 
     Args:
         inputs: Sequence of array-like objects to compare.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
 
     Raises:
         ValueError: If inputs is not a list or tuple.
-        AssertionError: If any array has a rank differing from the first array.
+        Exception: If any array has a rank differing from the first array.
     """
     if not are_asserts_enabled():
         return
@@ -431,22 +670,37 @@ def assert_equal_rank(inputs: Sequence[ArrayTree] | ArrayTree) -> None:
     ref_rank = _get_rank(inputs[0])
     for item in inputs[1:]:
         if _get_rank(item) != ref_rank:
-            raise AssertionError(f"Arrays have different ranks: {[_get_rank(t) for t in inputs]}.")
+            _raise_chex_error(
+                f"Arrays have different ranks: {[_get_rank(t) for t in inputs]}.",
+                custom_message=custom_message,
+                custom_message_format_vars=custom_message_format_vars,
+                include_default_message=include_default_message,
+                exception_type=exception_type,
+            )
 
 
 def assert_equal_shape(
     inputs: Sequence[ArrayTree] | ArrayTree,
     dims: int | Sequence[int] | None = None,
+    *,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
 ) -> None:
     """Assert that all arrays in inputs have identical shape, or match along dims.
 
     Args:
         inputs: Sequence of array-like objects to compare.
         dims: Optional axis index or sequence of axis indices to compare.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
 
     Raises:
         ValueError: If inputs is not a list/tuple or dims is out of bounds for inputs[0].
-        AssertionError: If shapes (or specified dimensions) do not match across inputs.
+        Exception: If shapes (or specified dimensions) do not match across inputs.
     """
     if not are_asserts_enabled():
         return
@@ -458,7 +712,13 @@ def assert_equal_shape(
         ref_shape = _get_shape(inputs[0])
         for item in inputs[1:]:
             if _get_shape(item) != ref_shape:
-                raise AssertionError(f"Arrays have different shapes: {[_get_shape(t) for t in inputs]}.")
+                _raise_chex_error(
+                    f"Arrays have different shapes: {[_get_shape(t) for t in inputs]}.",
+                    custom_message=custom_message,
+                    custom_message_format_vars=custom_message_format_vars,
+                    include_default_message=include_default_message,
+                    exception_type=exception_type,
+                )
     else:
         dim_list = [dims] if isinstance(dims, int) else list(dims)
         shape0 = _get_shape(inputs[0])
@@ -468,25 +728,46 @@ def assert_equal_shape(
         for item in inputs[1:]:
             st = _get_shape(item)
             if any(d >= len(st) or d < -len(st) for d in dim_list):
-                raise AssertionError(f"dims {dim_list} out of bounds for shape {st}.")
+                _raise_chex_error(
+                    f"dims {dim_list} out of bounds for shape {st}.",
+                    custom_message=custom_message,
+                    custom_message_format_vars=custom_message_format_vars,
+                    include_default_message=include_default_message,
+                    exception_type=exception_type,
+                )
             for d, expected_val in zip(dim_list, expected_dims):
                 if st[d] != expected_val:
-                    raise AssertionError(f"Dimension {d} mismatch: expected {expected_val}, got {st[d]}.")
+                    _raise_chex_error(
+                        f"Dimension {d} mismatch: expected {expected_val}, got {st[d]}.",
+                        custom_message=custom_message,
+                        custom_message_format_vars=custom_message_format_vars,
+                        include_default_message=include_default_message,
+                        exception_type=exception_type,
+                    )
 
 
 def assert_equal_shape_prefix(
     inputs: Sequence[ArrayTree] | ArrayTree,
     prefix_len: int,
+    *,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
 ) -> None:
     """Assert that the leading prefix_len dimensions of all inputs are equal.
 
     Args:
         inputs: Sequence of array-like objects to compare.
         prefix_len: Number of leading dimensions to compare.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
 
     Raises:
         ValueError: If inputs is not a list or tuple.
-        AssertionError: If any array has rank < prefix_len or its prefix differs.
+        Exception: If any array has rank < prefix_len or its prefix differs.
     """
     if not are_asserts_enabled():
         return
@@ -496,26 +777,47 @@ def assert_equal_shape_prefix(
         return
     shapes = [_get_shape(t) for t in inputs]
     if any(len(s) < prefix_len for s in shapes):
-        raise AssertionError(f"At least one shape has rank smaller than prefix_len={prefix_len}: {shapes}")
+        _raise_chex_error(
+            f"At least one shape has rank smaller than prefix_len={prefix_len}: {shapes}",
+            custom_message=custom_message,
+            custom_message_format_vars=custom_message_format_vars,
+            include_default_message=include_default_message,
+            exception_type=exception_type,
+        )
     prefix = shapes[0][:prefix_len]
     for s in shapes[1:]:
         if s[:prefix_len] != prefix:
-            raise AssertionError(f"Arrays have different shape prefixes of length {prefix_len}: {shapes}")
+            _raise_chex_error(
+                f"Arrays have different shape prefixes of length {prefix_len}: {shapes}",
+                custom_message=custom_message,
+                custom_message_format_vars=custom_message_format_vars,
+                include_default_message=include_default_message,
+                exception_type=exception_type,
+            )
 
 
 def assert_equal_shape_suffix(
     inputs: Sequence[ArrayTree] | ArrayTree,
     suffix_len: int,
+    *,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
 ) -> None:
     """Assert that the trailing suffix_len dimensions of all inputs are equal.
 
     Args:
         inputs: Sequence of array-like objects to compare.
         suffix_len: Number of trailing dimensions to compare.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
 
     Raises:
         ValueError: If inputs is not a list or tuple.
-        AssertionError: If any array has rank < suffix_len or its suffix differs.
+        Exception: If any array has rank < suffix_len or its suffix differs.
     """
     if not are_asserts_enabled():
         return
@@ -525,22 +827,45 @@ def assert_equal_shape_suffix(
         return
     shapes = [_get_shape(t) for t in inputs]
     if any(len(s) < suffix_len for s in shapes):
-        raise AssertionError(f"At least one shape has rank smaller than suffix_len={suffix_len}: {shapes}")
+        _raise_chex_error(
+            f"At least one shape has rank smaller than suffix_len={suffix_len}: {shapes}",
+            custom_message=custom_message,
+            custom_message_format_vars=custom_message_format_vars,
+            include_default_message=include_default_message,
+            exception_type=exception_type,
+        )
     suffix = shapes[0][-suffix_len:]
     for s in shapes[1:]:
         if s[-suffix_len:] != suffix:
-            raise AssertionError(f"Arrays have different shape suffixes of length {suffix_len}: {shapes}")
+            _raise_chex_error(
+                f"Arrays have different shape suffixes of length {suffix_len}: {shapes}",
+                custom_message=custom_message,
+                custom_message_format_vars=custom_message_format_vars,
+                include_default_message=include_default_message,
+                exception_type=exception_type,
+            )
 
 
-def assert_equal_size(inputs: Sequence[ArrayTree] | ArrayTree) -> None:
+def assert_equal_size(
+    inputs: Sequence[ArrayTree] | ArrayTree,
+    *,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
+) -> None:
     """Assert that all arrays in inputs have the same total element count.
 
     Args:
         inputs: Sequence of array-like objects to compare.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
 
     Raises:
         ValueError: If inputs is not a list or tuple.
-        AssertionError: If total element counts differ across inputs.
+        Exception: If total element counts differ across inputs.
     """
     if not are_asserts_enabled():
         return
@@ -551,7 +876,13 @@ def assert_equal_size(inputs: Sequence[ArrayTree] | ArrayTree) -> None:
     ref_size = _get_size(inputs[0])
     for item in inputs[1:]:
         if _get_size(item) != ref_size:
-            raise AssertionError(f"Arrays have different sizes: {[_get_size(t) for t in inputs]}.")
+            _raise_chex_error(
+                f"Arrays have different sizes: {[_get_size(t) for t in inputs]}.",
+                custom_message=custom_message,
+                custom_message_format_vars=custom_message_format_vars,
+                include_default_message=include_default_message,
+                exception_type=exception_type,
+            )
 
 
 def _match_single_rank(
@@ -575,16 +906,25 @@ def _match_single_rank(
 def assert_rank(
     inputs: ArrayTree,
     expected_ranks: int | set[int] | Sequence[int | set[int] | Sequence[int]],
+    *,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
 ) -> None:
     """Assert that input array(s) or PyTree leaves have rank matching expected_ranks.
 
     Args:
         inputs: Single array-like object, sequence of arrays, or PyTree of arrays.
         expected_ranks: Integer rank, set of allowed ranks, or sequence of per-input rank specs.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
 
     Raises:
         ValueError: If expected_ranks is invalid or length mismatches inputs.
-        AssertionError: If any input's rank does not match expected_ranks.
+        Exception: If any input's rank does not match expected_ranks.
     """
     if not are_asserts_enabled():
         return
@@ -624,11 +964,23 @@ def assert_rank(
                 )
             for item, spec in zip(items_list, expected_ranks):
                 if not _match_single_rank(_get_rank(item), spec):
-                    raise AssertionError(f"Rank {_get_rank(item)} does not match expected {spec}.")
+                    _raise_chex_error(
+                        f"Rank {_get_rank(item)} does not match expected {spec}.",
+                        custom_message=custom_message,
+                        custom_message_format_vars=custom_message_format_vars,
+                        include_default_message=include_default_message,
+                        exception_type=exception_type,
+                    )
             return
         for item in items_list:
             if not _match_single_rank(_get_rank(item), expected_ranks):
-                raise AssertionError(f"Rank {_get_rank(item)} does not match expected {expected_ranks}.")
+                _raise_chex_error(
+                    f"Rank {_get_rank(item)} does not match expected {expected_ranks}.",
+                    custom_message=custom_message,
+                    custom_message_format_vars=custom_message_format_vars,
+                    include_default_message=include_default_message,
+                    exception_type=exception_type,
+                )
         return
 
     r = _get_rank(inputs)
@@ -642,7 +994,13 @@ def assert_rank(
         raise ValueError(f"Invalid expected_ranks specification: {expected_ranks!r}")
 
     if r not in allowed:
-        raise AssertionError(f"Expected rank in {allowed}, got {r}.")
+        _raise_chex_error(
+            f"Expected rank in {allowed}, got {r}.",
+            custom_message=custom_message,
+            custom_message_format_vars=custom_message_format_vars,
+            include_default_message=include_default_message,
+            exception_type=exception_type,
+        )
 
 
 def _dim_matches(
@@ -778,42 +1136,61 @@ def _to_dim_matcher_list(
 
 def assert_shape(
     inputs: ArrayTree,
-    expected_shapes: TShapeMatcher | Sequence[TShapeMatcher],
+    expected_shapes: TShapeMatcher | Sequence[TShapeMatcher] | None = None,
+    *,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
 ) -> None:
     """Assert that input array(s) or PyTree leaves match the expected shape pattern(s).
 
     Args:
         inputs: Single array-like object, sequence of arrays, or PyTree of arrays.
         expected_shapes: Shape matcher tuple or sequence of per-input shape matcher tuples.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
 
     Raises:
         ValueError: If multiple Ellipsis appear in a pattern, tokens are invalid, or lengths mismatch.
-        AssertionError: If any array's shape fails to match its expected pattern.
+        Exception: If any array's shape fails to match its expected pattern.
     """
     if not are_asserts_enabled():
         return
+    resolved_shapes: TShapeMatcher | Sequence[TShapeMatcher] = () if expected_shapes is None else expected_shapes
     bindings: dict[str, int] = {}
-    if _is_pytree_container(inputs):
-        items_list = (
-            list(inputs)
-            if isinstance(inputs, (list, tuple)) and not isinstance(inputs, NamedTuplePyTreeProtocol)
-            else tree_leaves(inputs)
-        )
-        if _is_multi_shape_sequence(expected_shapes):
-            if len(items_list) != len(expected_shapes):
-                raise ValueError(
-                    f"Length of inputs ({len(items_list)}) != length of expected_shapes ({len(expected_shapes)})."
-                )
-            for item, pat in zip(items_list, expected_shapes):
-                _match_single_shape(_get_shape(item), _to_dim_matcher_list(pat), bindings)
+    try:
+        if _is_pytree_container(inputs):
+            items_list = (
+                list(inputs)
+                if isinstance(inputs, (list, tuple)) and not isinstance(inputs, NamedTuplePyTreeProtocol)
+                else tree_leaves(inputs)
+            )
+            if _is_multi_shape_sequence(resolved_shapes):
+                if len(items_list) != len(resolved_shapes):
+                    raise ValueError(
+                        f"Length of inputs ({len(items_list)}) != length of expected_shapes ({len(resolved_shapes)})."
+                    )
+                for item, pat in zip(items_list, resolved_shapes):
+                    _match_single_shape(_get_shape(item), _to_dim_matcher_list(pat), bindings)
+                return
+            single_pat = _to_dim_matcher_list(resolved_shapes)
+            for item in items_list:
+                _match_single_shape(_get_shape(item), single_pat, bindings)
             return
-        single_pat = _to_dim_matcher_list(expected_shapes)
-        for item in items_list:
-            _match_single_shape(_get_shape(item), single_pat, bindings)
-        return
 
-    single_pattern = _to_dim_matcher_list(expected_shapes)
-    _match_single_shape(_get_shape(inputs), single_pattern, bindings)
+        single_pattern = _to_dim_matcher_list(resolved_shapes)
+        _match_single_shape(_get_shape(inputs), single_pattern, bindings)
+    except AssertionError as exc:
+        _raise_chex_error(
+            str(exc),
+            custom_message=custom_message,
+            custom_message_format_vars=custom_message_format_vars,
+            include_default_message=include_default_message,
+            exception_type=exception_type,
+        )
 
 
 SingleSizeMatcher = Union[int, set[int], EllipsisType, Sequence[Union[int, set[int], EllipsisType]]]
@@ -852,15 +1229,24 @@ def _match_single_size(
 def assert_size(
     inputs: ArrayTree,
     expected_sizes: SizeSpecElement,
+    *,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
 ) -> None:
     """Assert that input array(s) or PyTree leaves have total element count matching expected_sizes.
 
     Args:
         inputs: Single array-like object, sequence of arrays, or PyTree of arrays.
         expected_sizes: Integer size, set of allowed sizes, Ellipsis, or sequence of sizes.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
 
     Raises:
-        AssertionError: If any input's total element count does not match expected_sizes.
+        Exception: If any input's total element count does not match expected_sizes.
     """
     if not are_asserts_enabled():
         return
@@ -874,21 +1260,43 @@ def assert_size(
             isinstance(expected_sizes, tuple) and any(isinstance(s, (list, tuple, set)) for s in expected_sizes)
         ):
             if len(items_list) != len(expected_sizes):
-                raise AssertionError(
-                    f"Length of inputs ({len(items_list)}) != length of expected_sizes ({len(expected_sizes)})."
+                _raise_chex_error(
+                    f"Length of inputs ({len(items_list)}) != length of expected_sizes ({len(expected_sizes)}).",
+                    custom_message=custom_message,
+                    custom_message_format_vars=custom_message_format_vars,
+                    include_default_message=include_default_message,
+                    exception_type=exception_type,
                 )
             for item, spec in zip(items_list, expected_sizes):
                 if not _match_single_size(_get_size(item), spec):
-                    raise AssertionError(f"Size {_get_size(item)} does not match expected {spec}.")
+                    _raise_chex_error(
+                        f"Size {_get_size(item)} does not match expected {spec}.",
+                        custom_message=custom_message,
+                        custom_message_format_vars=custom_message_format_vars,
+                        include_default_message=include_default_message,
+                        exception_type=exception_type,
+                    )
             return
         for item in items_list:
             if not _match_single_size(_get_size(item), expected_sizes):
-                raise AssertionError(f"Size {_get_size(item)} does not match expected {expected_sizes}.")
+                _raise_chex_error(
+                    f"Size {_get_size(item)} does not match expected {expected_sizes}.",
+                    custom_message=custom_message,
+                    custom_message_format_vars=custom_message_format_vars,
+                    include_default_message=include_default_message,
+                    exception_type=exception_type,
+                )
         return
 
     s = _get_size(inputs)
     if not _match_single_size(s, expected_sizes):
-        raise AssertionError(f"Expected size {expected_sizes}, got {s}.")
+        _raise_chex_error(
+            f"Expected size {expected_sizes}, got {s}.",
+            custom_message=custom_message,
+            custom_message_format_vars=custom_message_format_vars,
+            include_default_message=include_default_message,
+            exception_type=exception_type,
+        )
 
 
 def _match_single_type(
@@ -917,15 +1325,24 @@ def _match_single_type(
 def assert_type(
     inputs: ArrayTree,
     expected_types: ArrayDType | Sequence[ArrayDType | Sequence[ArrayDType]] | set[ArrayDType],
+    *,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
 ) -> None:
     """Assert that input array(s), scalar(s), or PyTree leaves match expected_types.
 
     Args:
         inputs: Single array/scalar, sequence of arrays/scalars, or PyTree.
         expected_types: Expected dtype, collection of allowed dtypes, or per-input dtype specs.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
 
     Raises:
-        AssertionError: If any input's dtype does not match expected_types.
+        Exception: If any input's dtype does not match expected_types.
     """
     if not are_asserts_enabled():
         return
@@ -958,24 +1375,47 @@ def assert_type(
         )
         if isinstance(expected_types, list):
             if len(items_list) != len(expected_types):
-                raise AssertionError(
-                    f"Length of inputs ({len(items_list)}) != length of expected_types ({len(expected_types)})."
+                _raise_chex_error(
+                    f"Length of inputs ({len(items_list)}) != length of expected_types ({len(expected_types)}).",
+                    custom_message=custom_message,
+                    custom_message_format_vars=custom_message_format_vars,
+                    include_default_message=include_default_message,
+                    exception_type=exception_type,
                 )
             for item, spec in zip(items_list, expected_types):
                 if not _match_single_type(item, spec):
-                    raise AssertionError(f"Type {_get_type(item)!r} does not match expected {spec!r}.")
+                    _raise_chex_error(
+                        f"Type {_get_type(item)!r} does not match expected {spec!r}.",
+                        custom_message=custom_message,
+                        custom_message_format_vars=custom_message_format_vars,
+                        include_default_message=include_default_message,
+                        exception_type=exception_type,
+                    )
             return
         for item in items_list:
             if not _match_single_type(item, expected_types):
-                raise AssertionError(f"Type {_get_type(item)!r} does not match expected {expected_types!r}.")
+                _raise_chex_error(
+                    f"Type {_get_type(item)!r} does not match expected {expected_types!r}.",
+                    custom_message=custom_message,
+                    custom_message_format_vars=custom_message_format_vars,
+                    include_default_message=include_default_message,
+                    exception_type=exception_type,
+                )
         return
 
     if not _match_single_type(inputs, expected_types):
-        raise AssertionError(f"Expected type {expected_types!r}, got {_get_type(inputs)!r}.")
+        _raise_chex_error(
+            f"Expected type {expected_types!r}, got {_get_type(inputs)!r}.",
+            custom_message=custom_message,
+            custom_message_format_vars=custom_message_format_vars,
+            include_default_message=include_default_message,
+            exception_type=exception_type,
+        )
 
 
 __all__ = [
     "SizeSpecElement",
+    "_raise_chex_error",
     "assert_axis_dimension",
     "assert_axis_dimension_comparator",
     "assert_axis_dimension_gt",

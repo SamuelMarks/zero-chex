@@ -148,6 +148,7 @@ class VariantDecorator:
 class TestCase(unittest.TestCase):
     """Base test case class providing support for @variants and @all_variants decorators."""
 
+    VARIANTS_MAIN_TEST_FN_NAME: str = "__variants_main_test_fn"
     _active_variant: VariantDecorator | None = None
 
     @overload
@@ -568,6 +569,71 @@ def all_variants(
     )
 
 
+def count_num_calls(fn: Callable[P, R]) -> tuple[Callable[P, R], Callable[[], int]]:
+    """Wrap a function and return a pair of (wrapped_fn, get_num_calls_fn).
+
+    Args:
+        fn: Target callable whose invocations should be counted.
+
+    Returns:
+        A 2-tuple of (wrapped_fn, count_getter) where count_getter() returns total calls.
+    """
+    calls: list[int] = [0]
+
+    @functools.wraps(fn)
+    def _wrapped(*args: P.args, **kwargs: P.kwargs) -> R:
+        """Increment call counter and invoke fn.
+
+        Args:
+            *args: Positional arguments forwarded to fn.
+            **kwargs: Keyword arguments forwarded to fn.
+
+        Returns:
+            Result of fn(*args, **kwargs).
+        """
+        calls[0] += 1
+        return fn(*args, **kwargs)
+
+    def _get_count() -> int:
+        """Return the number of times _wrapped has been called.
+
+        Returns:
+            Integer call count.
+        """
+        return calls[0]
+
+    return _wrapped, _get_count
+
+
+_VALID_VARIANT_NAMES: frozenset[str] = frozenset(
+    {
+        "with_jit",
+        "without_jit",
+        "with_device",
+        "without_device",
+        "with_pmap",
+        "without_pmap",
+    }
+)
+
+
+def check_variant_arguments(**kwargs: PyTree) -> None:
+    """Validate that keyword arguments passed to a variant decorator are known boolean flags.
+
+    Args:
+        **kwargs: Variant keyword arguments to validate.
+
+    Raises:
+        ValueError: If an unknown variant argument name is provided.
+        TypeError: If any variant argument value is not a boolean.
+    """
+    for k, v in kwargs.items():
+        if k not in _VALID_VARIANT_NAMES:
+            raise ValueError(f"Unknown variant argument: {k!r}.")
+        if not isinstance(v, bool):
+            raise TypeError(f"Variant argument {k!r} must be a bool, got {type(v).__name__}.")
+
+
 __all__ = [
     "BoundVariantsTestMethod",
     "ChexVariantType",
@@ -576,5 +642,7 @@ __all__ = [
     "VariantDecorator",
     "VariantsTestMethodWrapper",
     "all_variants",
+    "check_variant_arguments",
+    "count_num_calls",
     "variants",
 ]

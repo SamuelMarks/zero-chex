@@ -147,7 +147,14 @@ class VariableLeafProtocol(Protocol):
         ...
 
     def replace(self, value: PyTree | None = None) -> VariableLeafProtocol:
-        """Return a new variable container with an updated value."""
+        """Return a new variable container with an updated value.
+
+        Args:
+            value: Optional replacement value for the variable container.
+
+        Returns:
+            A new VariableLeafProtocol instance.
+        """
         ...
 
 
@@ -196,15 +203,30 @@ class StateMappingProtocol(Protocol):
     """Protocol for custom mapping PyTree containers such as Flax State and FrozenDict."""
 
     def __init__(self, mapping: Mapping[str, PyTree] | None = None) -> None:
-        """Initialize the mapping container from a dictionary of child entries."""
+        """Initialize the mapping container from a dictionary of child entries.
+
+        Args:
+            mapping: Optional mapping of string keys to child PyTree values.
+        """
         ...
 
     def keys(self) -> Iterable[DictKey]:
-        """Return an iterable over the mapping keys."""
+        """Return an iterable over the mapping keys.
+
+        Returns:
+            An iterable of DictKey keys.
+        """
         ...
 
     def __getitem__(self, key: DictKey) -> PyTree:
-        """Retrieve a child PyTree value by key."""
+        """Retrieve a child PyTree value by key.
+
+        Args:
+            key: Key identifying the child PyTree entry.
+
+        Returns:
+            The child PyTree value associated with key.
+        """
         ...
 
     def __len__(self) -> int:

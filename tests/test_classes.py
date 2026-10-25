@@ -308,3 +308,20 @@ def test_variants_and_testcase() -> None:
         ChexVariantType.WITH_JIT,
         ChexVariantType.WITHOUT_JIT,
     ]
+
+    assert TestCase.VARIANTS_MAIN_TEST_FN_NAME == "__variants_main_test_fn"
+    assert Dimensions._HAS_DYNAMIC_ATTRIBUTES is True
+
+    from zero_chex._src.variants import check_variant_arguments, count_num_calls
+
+    wrapped_fn, get_calls = count_num_calls(_inc1)
+    assert get_calls() == 0
+    assert wrapped_fn(10) == 11
+    assert wrapped_fn(20) == 21
+    assert get_calls() == 2
+
+    check_variant_arguments(with_jit=True, without_jit=False)
+    with pytest.raises(ValueError, match="Unknown variant argument"):
+        check_variant_arguments(invalid_flag=True)
+    with pytest.raises(TypeError, match="must be a bool"):
+        check_variant_arguments(with_jit=1)

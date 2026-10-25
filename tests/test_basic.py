@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from zero_chex import (
+    _src,
     assert_devices_available,
     assert_equal,
     assert_exactly_one_is_none,
@@ -21,8 +22,9 @@ from zero_chex.mocks import _STATE
 
 
 def test_num_devices_available() -> None:
-    """Test _num_devices_available across cpu, gpu, tpu, and invalid platforms."""
+    """Test _num_devices_available across cpu, gpu, tpu, backend filter, and invalid platforms."""
     assert _num_devices_available("cpu") == 1
+    assert _num_devices_available("cpu", backend="cpu") == 1
     assert _num_devices_available("gpu") == 1
     assert _num_devices_available("tpu") == 1
     set_n_cpu_devices(4)
@@ -127,3 +129,34 @@ def test_assert_is_divisible() -> None:
         assert_is_divisible(10, 3)
     with pytest.raises(AssertionError, match="not divisible"):
         assert_is_divisible(10, 0)
+    with pytest.raises(
+        ValueError,
+        match=r"\[Chex\] Assertion failed: bad divisor 3 for 10",
+    ):
+        assert_is_divisible(
+            10,
+            3,
+            custom_message="bad divisor {} for {}",
+            custom_message_format_vars=(3, 10),
+            include_default_message=False,
+            exception_type=ValueError,
+        )
+    with pytest.raises(AssertionError, match=r"1 != 2 \[extra info\]"):
+        assert_equal(1, 2, custom_message="extra info", include_default_message=True)
+
+
+def test_asserts_internal_submodule() -> None:
+    """Test zero_chex._src.asserts_internal helpers and constants."""
+    ai = _src.asserts_internal
+    assert ai.ERR_PREFIX == "[Chex] Assertion"
+    assert ai.DISABLE_ASSERTIONS is False
+    assert isinstance(ai.TRACE_COUNTER, dict)
+
+    wrapped = ai.chex_assertion(lambda x: x + 1)
+    assert wrapped(2) == 3
+
+    assert ai.format_shape_matcher((2, None, Ellipsis, "B", {3, 4})) == "(2, *, ..., B, {3, 4})"
+    assert ai.format_tree_path(("a", 0, "b")) == "a/0/b"
+    assert ai.format_tree_path(()) == "root"
+    assert ai.get_chexify_err_message("assert_scalar", "bad val") == "[Chex] Assertion assert_scalar failed: bad val"
+    assert ai.num_devices_available("cpu", backend="cpu") == 1

@@ -121,6 +121,8 @@ class Dimensions(collections.abc.Mapping[str, tuple[Optional[int], ...]]):
     literals such as dims["B3"] into (2, 3), and wildcard '*' into None.
     """
 
+    _HAS_DYNAMIC_ATTRIBUTES: bool = True
+
     A = _DimLetterDescriptor("A")
     B = _DimLetterDescriptor("B")
     C = _DimLetterDescriptor("C")
@@ -650,27 +652,34 @@ def warn_only_n_pos_args_in_future(
 @overload
 def warn_keyword_args_only_in_future(
     fun: Callable[P, R],
+    *,
+    n: int = 0,
 ) -> Callable[P, R]: ...
 
 
 @overload
 def warn_keyword_args_only_in_future(
     fun: None = None,
+    *,
+    n: int = 0,
 ) -> Callable[[Callable[P, R]], Callable[P, R]]: ...
 
 
 def warn_keyword_args_only_in_future(
     fun: Callable[P, R] | None = None,
+    *,
+    n: int = 0,
 ) -> Callable[P, R] | Callable[[Callable[P, R]], Callable[P, R]]:
     """Decorate a function to emit a FutureWarning if any positional arguments are passed.
 
     Args:
         fun: The function to wrap, or None when called with parentheses.
+        n: Maximum number of positional arguments allowed (defaults to 0).
 
     Returns:
         Wrapped callable or decorator function.
     """
-    return warn_only_n_pos_args_in_future(fun, n=0)
+    return warn_only_n_pos_args_in_future(fun, n=n)
 
 
 __all__ = [

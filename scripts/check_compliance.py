@@ -1,4 +1,4 @@
-"""Check API compliance against CHEX_TODO.md and SEMANTIC_PLAN.md."""
+"""Check API compliance against ml-ecosystem-snapshots v0.0.5, CHEX_TODO.md, and SEMANTIC_PLAN.md."""
 
 from __future__ import annotations
 
@@ -7,6 +7,13 @@ import re
 import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
+sys.path.insert(
+    0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "ml-ecosystem-snapshots", "src"))
+)
+
+from ml_ecosystem_snapshots import extract_snapshot
+from ml_ecosystem_snapshots.frameworks.chex import CANONICAL_CHEX_OPS
+
 import zero_chex
 
 
@@ -59,7 +66,7 @@ def _parse_semantic_plan() -> list[tuple[str, bool]]:
 
 
 def main() -> None:
-    """Validate that all 75 API targets in CHEX_TODO.md and SEMANTIC_PLAN.md are exported by zero_chex."""
+    """Validate that all API targets in ml-ecosystem-snapshots v0.0.5, CHEX_TODO.md, and SEMANTIC_PLAN.md exist."""
     todo_items = _parse_chex_todo()
     semantic_items = _parse_semantic_plan()
 
@@ -68,15 +75,29 @@ def main() -> None:
         sys.exit(1)
 
     exported_set = set(zero_chex.__all__)
+    zero_members = vars(zero_chex)
     missing: list[str] = []
-    total = len(todo_items)
+
+    snap_envelope = extract_snapshot("chex")
+    snapshot_items = snap_envelope["categories"].get("array", [])
+    snapshot_names = {item["api_path"].split(".", 1)[1] for item in snapshot_items if "." in item["api_path"]}
+    canonical_names = {spec.name for spec in CANONICAL_CHEX_OPS}
+
+    minimum_snapshot_apis = sorted(snapshot_names | canonical_names)
+    total = len(minimum_snapshot_apis)
     implemented = 0
 
-    for symbol_name, checked in todo_items:
-        if checked and symbol_name in exported_set:
+    for symbol_name in minimum_snapshot_apis:
+        if symbol_name in exported_set and symbol_name in zero_members:
             implemented += 1
         else:
-            missing.append(f"zero_chex.{symbol_name}")
+            missing.append(f"zero_chex.{symbol_name} (ml-ecosystem-snapshots v0.0.5)")
+
+    for symbol_name, checked in todo_items:
+        if not checked or symbol_name not in exported_set:
+            entry = f"zero_chex.{symbol_name} (CHEX_TODO.md)"
+            if entry not in missing:
+                missing.append(entry)
 
     for symbol_name, checked in semantic_items:
         if not checked or symbol_name not in exported_set:
@@ -92,7 +113,7 @@ def main() -> None:
         print(f"Overall Compliance: {pct:.1f}% ({implemented}/{total})")
         sys.exit(1)
 
-    print(f"Compliance Check Passed! 100% compliant ({implemented}/{total} APIs).")
+    print(f"Compliance Check Passed! 100% compliant ({implemented}/{total} Snapshot APIs).")
     sys.exit(0)
 
 

@@ -1,4 +1,4 @@
-"""Verify that all symbols in chex_api_snapshot.json are exercised in enabled-assertion tests/."""
+"""Verify that all symbols in ml-ecosystem-snapshots v0.0.5 and chex_api_snapshot.json are exercised in tests/."""
 
 from __future__ import annotations
 
@@ -6,6 +6,13 @@ import ast
 import json
 import os
 import sys
+
+sys.path.insert(
+    0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "ml-ecosystem-snapshots", "src"))
+)
+
+from ml_ecosystem_snapshots import extract_snapshot
+from ml_ecosystem_snapshots.frameworks.chex import CANONICAL_CHEX_OPS
 
 
 def get_referenced_names(node: ast.AST) -> set[str]:
@@ -27,11 +34,16 @@ def get_referenced_names(node: ast.AST) -> set[str]:
 
 
 def main() -> None:
-    """Check that every symbol in chex_api_snapshot.json is exercised in tests/ (excluding test_chex.py)."""
+    """Check that every symbol in ml-ecosystem-snapshots v0.0.5 and chex_api_snapshot.json is tested in tests/."""
     with open("chex_api_snapshot.json", encoding="utf-8") as file_handle:
         api: dict[str, dict[str, str]] = json.load(file_handle)
 
-    all_symbols = set(api.keys())
+    snap_envelope = extract_snapshot("chex")
+    snapshot_items = snap_envelope["categories"].get("array", [])
+    snapshot_names = {item["api_path"].split(".", 1)[1] for item in snapshot_items if "." in item["api_path"]}
+    canonical_names = {spec.name for spec in CANONICAL_CHEX_OPS}
+
+    all_symbols = set(api.keys()) | snapshot_names | canonical_names
 
     tests_dir = "tests"
     covered: set[str] = set()
@@ -60,7 +72,7 @@ def main() -> None:
             print(" -", item)
         sys.exit(1)
     else:
-        print("Test Parity Check Passed!")
+        print(f"Test Parity Check Passed! ({len(all_symbols)} symbols verified)")
         sys.exit(0)
 
 

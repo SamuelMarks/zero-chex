@@ -360,3 +360,13 @@ def test_cross_ecosystem_tensor_assertions() -> None:
         assert_type(shm_arr, DType.float32)
     finally:
         shm_arr.unlink_on_del()
+
+    with pytest.raises(ValueError, match=r"\[Chex\] Assertion failed: shape mismatch on batch 4"):
+        assert_shape(
+            ZeroArray.zeros((2, 3)),
+            (4, 3),
+            custom_message="shape mismatch on batch {}",
+            custom_message_format_vars=(4,),
+            include_default_message=False,
+            exception_type=ValueError,
+        )

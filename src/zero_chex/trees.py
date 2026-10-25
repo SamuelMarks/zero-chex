@@ -15,7 +15,7 @@ from zero_chex._src.tree_util import (
     tree_map,
     tree_structure,
 )
-from zero_chex.assertions import _dtypes_match, _get_shape, _get_size, _get_type
+from zero_chex.assertions import _dtypes_match, _get_shape, _get_size, _get_type, _raise_chex_error
 from zero_chex.mocks import are_asserts_enabled
 from zero_chex.types import (
     ArrayProtocol,
@@ -155,13 +155,14 @@ def _float32_ulp_diff(a: float, b: float) -> int:
     return abs(ord_a - ord_b)
 
 
-def _leaf_close_ulp(l1: LeafValue, l2: LeafValue, maxulp: int = 1) -> bool:
+def _leaf_close_ulp(l1: LeafValue, l2: LeafValue, maxulp: int = 1, equal_nan: bool = False) -> bool:
     """Compare two leaf values within maxulp IEEE-754 Units in the Last Place.
 
     Args:
         l1: First leaf value.
         l2: Second leaf value.
         maxulp: Maximum allowed ULP difference.
+        equal_nan: Whether two NaN values at the same position are treated as equal.
 
     Returns:
         True if all corresponding elements are within maxulp ULPs.
@@ -174,6 +175,8 @@ def _leaf_close_ulp(l1: LeafValue, l2: LeafValue, maxulp: int = 1) -> bool:
         return bool(l1 == l2)
     for a, b in zip(s1, s2):
         if _scalar_is_nan(a) or _scalar_is_nan(b):
+            if equal_nan and _scalar_is_nan(a) and _scalar_is_nan(b):
+                continue
             return False
         if _scalar_is_inf(a) or _scalar_is_inf(b):
             if a == b:
@@ -190,13 +193,14 @@ def _leaf_close_ulp(l1: LeafValue, l2: LeafValue, maxulp: int = 1) -> bool:
     return True
 
 
-def _leaf_equal(l1: LeafValue, l2: LeafValue, strict: bool = False) -> bool:
+def _leaf_equal(l1: LeafValue, l2: LeafValue, strict: bool = False, equal_nan: bool = False) -> bool:
     """Check whether two PyTree leaves are equal in shape, value, and optionally dtype.
 
     Args:
         l1: First leaf value.
         l2: Second leaf value.
         strict: If True, also requires matching dtypes.
+        equal_nan: Whether two NaN values at the same position are treated as equal.
 
     Returns:
         True if leaves are equal.
@@ -212,6 +216,8 @@ def _leaf_equal(l1: LeafValue, l2: LeafValue, strict: bool = False) -> bool:
     s2 = _extract_flat_scalars(l2)
     if s1 or s2:
         for a, b in zip(s1, s2):
+            if equal_nan and _scalar_is_nan(a) and _scalar_is_nan(b):
+                continue
             if isinstance(a, bool) != isinstance(b, bool):
                 return False
             if a != b:
@@ -220,14 +226,43 @@ def _leaf_equal(l1: LeafValue, l2: LeafValue, strict: bool = False) -> bool:
     return bool(l1 == l2)
 
 
-def assert_tree_all_finite(tree_like: PyTree) -> None:
+def _both_leaves_identical_nans(l1: LeafValue, l2: LeafValue) -> bool:
+    """Check whether two scalar leaves are both NaN.
+
+    Args:
+        l1: First leaf value.
+        l2: Second leaf value.
+
+    Returns:
+        True if both leaves are 0-D scalars whose values are NaN.
+    """
+    return (
+        isinstance(l1, (int, float, complex, bool))
+        and isinstance(l2, (int, float, complex, bool))
+        and _scalar_is_nan(l1)
+        and _scalar_is_nan(l2)
+    )
+
+
+def assert_tree_all_finite(
+    tree_like: PyTree,
+    *,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
+) -> None:
     """Assert that all numeric and array leaves in tree_like contain only finite values.
 
     Args:
         tree_like: The PyTree to inspect for NaN or Inf values.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
 
     Raises:
-        AssertionError: If any leaf contains a non-finite value.
+        Exception: If any leaf contains a non-finite value.
     """
     if not are_asserts_enabled():
         return
@@ -237,20 +272,79 @@ def assert_tree_all_finite(tree_like: PyTree) -> None:
         for val in scalars:
             if isinstance(val, complex):
                 if not (math.isfinite(val.real) and math.isfinite(val.imag)):
-                    raise AssertionError(f"Tree contains non-finite value {val!r} at {_format_path(path)}.")
+                    _raise_chex_error(
+                        f"Tree contains non-finite value {val!r} at {_format_path(path)}.",
+                        custom_message=custom_message,
+                        custom_message_format_vars=custom_message_format_vars,
+                        include_default_message=include_default_message,
+                        exception_type=exception_type,
+                    )
             else:
                 if not math.isfinite(float(val)):
-                    raise AssertionError(f"Tree contains non-finite value {val!r} at {_format_path(path)}.")
+                    _raise_chex_error(
+                        f"Tree contains non-finite value {val!r} at {_format_path(path)}.",
+                        custom_message=custom_message,
+                        custom_message_format_vars=custom_message_format_vars,
+                        include_default_message=include_default_message,
+                        exception_type=exception_type,
+                    )
 
 
-def assert_tree_has_only_ndarrays(tree: PyTree) -> None:
+def assert_tree_no_nans(
+    tree_like: PyTree,
+    *,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
+) -> None:
+    """Assert that no numeric or array leaf in tree_like contains a NaN value.
+
+    Args:
+        tree_like: The PyTree to inspect for NaN values.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
+
+    Raises:
+        Exception: If any leaf contains a NaN value.
+    """
+    if not are_asserts_enabled():
+        return
+    path_leaves, _ = tree_flatten_with_path(tree_like)
+    for path, leaf in path_leaves:
+        scalars = _extract_flat_scalars(leaf)
+        for val in scalars:
+            if _scalar_is_nan(val):
+                _raise_chex_error(
+                    f"Tree contains NaN value {val!r} at {_format_path(path)}.",
+                    custom_message=custom_message,
+                    custom_message_format_vars=custom_message_format_vars,
+                    include_default_message=include_default_message,
+                    exception_type=exception_type,
+                )
+
+
+def assert_tree_has_only_ndarrays(
+    tree: PyTree,
+    *,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
+) -> None:
     """Assert that every leaf in tree is an n-dimensional array object.
 
     Args:
         tree: The PyTree whose leaves are checked.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
 
     Raises:
-        AssertionError: If any leaf does not expose a valid shape attribute.
+        Exception: If any leaf does not expose a valid shape attribute.
     """
     if not are_asserts_enabled():
         return
@@ -267,39 +361,78 @@ def assert_tree_has_only_ndarrays(tree: PyTree) -> None:
             ),
         ) or (isinstance(inner, ShapeOnlyProtocol) and _has_valid_shape_tuple(inner))
         if not is_ndarray:
-            raise AssertionError(
-                f"Tree leaf {leaf!r} at {_format_path(path)} of type {type(leaf).__name__} is not an ndarray."
+            _raise_chex_error(
+                f"Tree leaf {leaf!r} at {_format_path(path)} of type {type(leaf).__name__} is not an ndarray.",
+                custom_message=custom_message,
+                custom_message_format_vars=custom_message_format_vars,
+                include_default_message=include_default_message,
+                exception_type=exception_type,
             )
 
 
-def assert_tree_no_nones(tree: PyTree) -> None:
+def assert_tree_no_nones(
+    tree: PyTree,
+    *,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
+) -> None:
     """Assert that no leaf in tree is None.
 
     Args:
         tree: The PyTree to inspect.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
 
     Raises:
-        AssertionError: If any leaf in tree is None.
+        Exception: If any leaf in tree is None.
     """
     if not are_asserts_enabled():
         return
     if tree is None:
-        raise AssertionError("Tree is None.")
+        _raise_chex_error(
+            "Tree is None.",
+            custom_message=custom_message,
+            custom_message_format_vars=custom_message_format_vars,
+            include_default_message=include_default_message,
+            exception_type=exception_type,
+        )
     path_leaves, _ = tree_flatten_with_path(tree)
     for path, leaf in path_leaves:
         if leaf is None:
-            raise AssertionError(f"None detected in tree at {_format_path(path)}.")
+            _raise_chex_error(
+                f"None detected in tree at {_format_path(path)}.",
+                custom_message=custom_message,
+                custom_message_format_vars=custom_message_format_vars,
+                include_default_message=include_default_message,
+                exception_type=exception_type,
+            )
 
 
-def assert_tree_shape_prefix(tree: PyTree, shape_prefix: Sequence[int]) -> None:
+def assert_tree_shape_prefix(
+    tree: PyTree,
+    shape_prefix: Sequence[int],
+    *,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
+) -> None:
     """Assert that all leaves in tree have shapes starting with shape_prefix.
 
     Args:
         tree: The PyTree whose leaf shapes are checked.
         shape_prefix: Sequence of leading dimension sizes expected on every leaf.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
 
     Raises:
-        AssertionError: If any leaf's shape does not begin with shape_prefix.
+        Exception: If any leaf's shape does not begin with shape_prefix.
     """
     if not are_asserts_enabled():
         return
@@ -308,20 +441,36 @@ def assert_tree_shape_prefix(tree: PyTree, shape_prefix: Sequence[int]) -> None:
     for path, leaf in path_leaves:
         s = _get_shape(leaf)
         if len(s) < len(prefix) or s[: len(prefix)] != prefix:
-            raise AssertionError(
-                f"Leaf shape {s} at {_format_path(path)} does not start with expected prefix {prefix}."
+            _raise_chex_error(
+                f"Leaf shape {s} at {_format_path(path)} does not start with expected prefix {prefix}.",
+                custom_message=custom_message,
+                custom_message_format_vars=custom_message_format_vars,
+                include_default_message=include_default_message,
+                exception_type=exception_type,
             )
 
 
-def assert_tree_shape_suffix(tree: PyTree, shape_suffix: Sequence[int]) -> None:
+def assert_tree_shape_suffix(
+    tree: PyTree,
+    shape_suffix: Sequence[int],
+    *,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
+) -> None:
     """Assert that all leaves in tree have shapes ending with shape_suffix.
 
     Args:
         tree: The PyTree whose leaf shapes are checked.
         shape_suffix: Sequence of trailing dimension sizes expected on every leaf.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
 
     Raises:
-        AssertionError: If any leaf's shape does not end with shape_suffix.
+        Exception: If any leaf's shape does not end with shape_suffix.
     """
     if not are_asserts_enabled():
         return
@@ -332,17 +481,33 @@ def assert_tree_shape_suffix(tree: PyTree, shape_suffix: Sequence[int]) -> None:
         if not suffix:
             continue
         if len(s) < len(suffix) or s[-len(suffix) :] != suffix:
-            raise AssertionError(f"Leaf shape {s} at {_format_path(path)} does not end with expected suffix {suffix}.")
+            _raise_chex_error(
+                f"Leaf shape {s} at {_format_path(path)} does not end with expected suffix {suffix}.",
+                custom_message=custom_message,
+                custom_message_format_vars=custom_message_format_vars,
+                include_default_message=include_default_message,
+                exception_type=exception_type,
+            )
 
 
-def assert_trees_all_equal_structs(*trees: PyTree) -> None:
+def assert_trees_all_equal_structs(
+    *trees: PyTree,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
+) -> None:
     """Assert that all provided PyTrees share the exact same container structure.
 
     Args:
         *trees: Two or more PyTrees to compare structurally.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
 
     Raises:
-        AssertionError: If the PyTreeDef structures of any two trees differ.
+        Exception: If the PyTreeDef structures of any two trees differ.
     """
     if not are_asserts_enabled():
         return
@@ -352,13 +517,24 @@ def assert_trees_all_equal_structs(*trees: PyTree) -> None:
     def0 = tree_structure(first_tree)
     for t in trees[1:]:
         if tree_structure(t) != def0:
-            raise AssertionError(f"Trees have different structures: {def0!r} vs {tree_structure(t)!r}.")
+            _raise_chex_error(
+                f"Trees have different structures: {def0!r} vs {tree_structure(t)!r}.",
+                custom_message=custom_message,
+                custom_message_format_vars=custom_message_format_vars,
+                include_default_message=include_default_message,
+                exception_type=exception_type,
+            )
 
 
 def assert_trees_all_equal_comparator(
     equality_comparator: Callable[[LeafValue, LeafValue], bool],
     error_msg_fn: Callable[[LeafValue, LeafValue], str],
     *trees: PyTree,
+    ignore_nans: bool = False,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
 ) -> None:
     """Assert that all PyTrees have identical structure and satisfy equality_comparator on leaves.
 
@@ -366,28 +542,52 @@ def assert_trees_all_equal_comparator(
         equality_comparator: Binary predicate comparing corresponding leaves.
         error_msg_fn: Function producing an error string for a failing leaf pair.
         *trees: Two or more PyTrees to compare.
+        ignore_nans: Whether to treat corresponding NaN values as equal.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
 
     Raises:
-        AssertionError: If structures differ or equality_comparator returns False for any leaf pair.
+        Exception: If structures differ or equality_comparator returns False for any leaf pair.
     """
     if not are_asserts_enabled():
         return
     if len(trees) < 2:
         return
-    assert_trees_all_equal_structs(*trees)
+    assert_trees_all_equal_structs(
+        *trees,
+        custom_message=custom_message,
+        custom_message_format_vars=custom_message_format_vars,
+        include_default_message=include_default_message,
+        exception_type=exception_type,
+    )
     path_leaves0, _ = tree_flatten_with_path(trees[0])
     for other_tree in trees[1:]:
         other_leaves = _get_leaves(other_tree)
         for (path, l1), l2 in zip(path_leaves0, other_leaves):
+            if ignore_nans and _both_leaves_identical_nans(l1, l2):
+                continue
             if not equality_comparator(l1, l2):
-                raise AssertionError(f"Error at {_format_path(path)}: {error_msg_fn(l1, l2)}")
+                _raise_chex_error(
+                    f"Error at {_format_path(path)}: {error_msg_fn(l1, l2)}",
+                    custom_message=custom_message,
+                    custom_message_format_vars=custom_message_format_vars,
+                    include_default_message=include_default_message,
+                    exception_type=exception_type,
+                )
 
 
 def assert_trees_all_close(
     *trees: PyTree,
     rtol: float = 1e-06,
     atol: float = 0.0,
+    ignore_nans: bool = False,
     equal_nan: bool = False,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
 ) -> None:
     """Assert that all PyTrees have identical structure and numerically close leaf values.
 
@@ -395,78 +595,132 @@ def assert_trees_all_close(
         *trees: Two or more PyTrees to compare.
         rtol: Relative tolerance.
         atol: Absolute tolerance.
-        equal_nan: Whether NaNs in corresponding positions are considered equal.
+        ignore_nans: Whether NaNs in corresponding positions are ignored/treated as equal.
+        equal_nan: Alias for ignore_nans for NumPy/JAX compatibility.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
 
     Raises:
-        AssertionError: If structures differ or any leaves are not within tolerance.
+        Exception: If structures differ or any leaves are not within tolerance.
     """
     if not are_asserts_enabled():
         return
+    nan_ok = ignore_nans or equal_nan
     assert_trees_all_equal_comparator(
-        lambda l1, l2: _leaf_close(l1, l2, rtol=rtol, atol=atol, equal_nan=equal_nan),
+        lambda l1, l2: _leaf_close(l1, l2, rtol=rtol, atol=atol, equal_nan=nan_ok),
         lambda l1, l2: f"Leaves not close: {l1!r} vs {l2!r} (rtol={rtol}, atol={atol})",
         *trees,
+        custom_message=custom_message,
+        custom_message_format_vars=custom_message_format_vars,
+        include_default_message=include_default_message,
+        exception_type=exception_type,
     )
 
 
 def assert_trees_all_close_ulp(
     *trees: PyTree,
     maxulp: int = 1,
+    ignore_nans: bool = False,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
 ) -> None:
     """Assert that all PyTrees have identical structure and leaves within maxulp ULPs.
 
     Args:
         *trees: Two or more PyTrees to compare.
         maxulp: Maximum number of ULPs allowed between corresponding leaf elements.
+        ignore_nans: Whether NaNs in corresponding positions are ignored/treated as equal.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
 
     Raises:
-        AssertionError: If structures differ or leaves differ by more than maxulp ULPs.
+        Exception: If structures differ or leaves differ by more than maxulp ULPs.
     """
     if not are_asserts_enabled():
         return
     assert_trees_all_equal_comparator(
-        lambda l1, l2: _leaf_close_ulp(l1, l2, maxulp=maxulp),
+        lambda l1, l2: _leaf_close_ulp(l1, l2, maxulp=maxulp, equal_nan=ignore_nans),
         lambda l1, l2: f"Leaves differ by more than {maxulp} ULPs: {l1!r} vs {l2!r}",
         *trees,
+        custom_message=custom_message,
+        custom_message_format_vars=custom_message_format_vars,
+        include_default_message=include_default_message,
+        exception_type=exception_type,
     )
 
 
 def assert_trees_all_equal(
     *trees: PyTree,
     strict: bool = False,
+    ignore_nans: bool = False,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
 ) -> None:
     """Assert that all PyTrees have identical structure and equal leaf values.
 
     Args:
         *trees: Two or more PyTrees to compare.
         strict: Whether to also enforce strict dtype equality on leaves.
+        ignore_nans: Whether NaNs in corresponding positions are ignored/treated as equal.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
 
     Raises:
-        AssertionError: If structures or leaf values differ.
+        Exception: If structures or leaf values differ.
     """
     if not are_asserts_enabled():
         return
     assert_trees_all_equal_comparator(
-        lambda l1, l2: _leaf_equal(l1, l2, strict=strict),
+        lambda l1, l2: _leaf_equal(l1, l2, strict=strict, equal_nan=ignore_nans),
         lambda l1, l2: f"Leaves are not equal: {l1!r} != {l2!r}",
         *trees,
+        custom_message=custom_message,
+        custom_message_format_vars=custom_message_format_vars,
+        include_default_message=include_default_message,
+        exception_type=exception_type,
     )
 
 
-def assert_trees_all_equal_dtypes(*trees: PyTree) -> None:
+def assert_trees_all_equal_dtypes(
+    *trees: PyTree,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
+) -> None:
     """Assert that all PyTrees have identical structure and matching array dtypes on leaves.
 
     Args:
         *trees: Two or more PyTrees to compare.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
 
     Raises:
-        AssertionError: If any leaf lacks a dtype attribute or leaf dtypes differ.
+        Exception: If any leaf lacks a dtype attribute or leaf dtypes differ.
     """
     if not are_asserts_enabled():
         return
     if len(trees) < 2:
         return
-    assert_trees_all_equal_structs(*trees)
+    assert_trees_all_equal_structs(
+        *trees,
+        custom_message=custom_message,
+        custom_message_format_vars=custom_message_format_vars,
+        include_default_message=include_default_message,
+        exception_type=exception_type,
+    )
     path_leaves0, _ = tree_flatten_with_path(trees[0])
     for other_tree in trees[1:]:
         other_leaves = _get_leaves(other_tree)
@@ -476,23 +730,41 @@ def assert_trees_all_equal_dtypes(*trees: PyTree) -> None:
             if not isinstance(inner1, (ArrayProtocol, DTypeAttrProtocol, TensorSpec)) or not isinstance(
                 inner2, (ArrayProtocol, DTypeAttrProtocol, TensorSpec)
             ):
-                raise AssertionError(
-                    f"Leaf {l1!r} or {l2!r} at {_format_path(path)} is not a (j-)np array exposing dtype."
+                _raise_chex_error(
+                    f"Leaf {l1!r} or {l2!r} at {_format_path(path)} is not a (j-)np array exposing dtype.",
+                    custom_message=custom_message,
+                    custom_message_format_vars=custom_message_format_vars,
+                    include_default_message=include_default_message,
+                    exception_type=exception_type,
                 )
             if not _dtypes_match(inner1.dtype, inner2.dtype):
-                raise AssertionError(
-                    f"Leaf dtypes do not match at {_format_path(path)}: {inner1.dtype!r} != {inner2.dtype!r}."
+                _raise_chex_error(
+                    f"Leaf dtypes do not match at {_format_path(path)}: {inner1.dtype!r} != {inner2.dtype!r}.",
+                    custom_message=custom_message,
+                    custom_message_format_vars=custom_message_format_vars,
+                    include_default_message=include_default_message,
+                    exception_type=exception_type,
                 )
 
 
-def assert_trees_all_equal_shapes(*trees: PyTree) -> None:
+def assert_trees_all_equal_shapes(
+    *trees: PyTree,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
+) -> None:
     """Assert that all PyTrees have identical structure and matching shapes on leaves.
 
     Args:
         *trees: Two or more PyTrees to compare.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
 
     Raises:
-        AssertionError: If any corresponding leaves have different shapes.
+        Exception: If any corresponding leaves have different shapes.
     """
     if not are_asserts_enabled():
         return
@@ -500,17 +772,31 @@ def assert_trees_all_equal_shapes(*trees: PyTree) -> None:
         lambda l1, l2: _get_shape(l1) == _get_shape(l2),
         lambda l1, l2: f"Leaf shapes do not match: {_get_shape(l1)} != {_get_shape(l2)}",
         *trees,
+        custom_message=custom_message,
+        custom_message_format_vars=custom_message_format_vars,
+        include_default_message=include_default_message,
+        exception_type=exception_type,
     )
 
 
-def assert_trees_all_equal_sizes(*trees: PyTree) -> None:
+def assert_trees_all_equal_sizes(
+    *trees: PyTree,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
+) -> None:
     """Assert that all PyTrees have identical structure and matching element counts on leaves.
 
     Args:
         *trees: Two or more PyTrees to compare.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
 
     Raises:
-        AssertionError: If any corresponding leaves have different total element counts.
+        Exception: If any corresponding leaves have different total element counts.
     """
     if not are_asserts_enabled():
         return
@@ -518,22 +804,48 @@ def assert_trees_all_equal_sizes(*trees: PyTree) -> None:
         lambda l1, l2: _get_size(l1) == _get_size(l2),
         lambda l1, l2: f"Leaf sizes do not match: {_get_size(l1)} != {_get_size(l2)}",
         *trees,
+        custom_message=custom_message,
+        custom_message_format_vars=custom_message_format_vars,
+        include_default_message=include_default_message,
+        exception_type=exception_type,
     )
 
 
-def assert_trees_all_equal_shapes_and_dtypes(*trees: PyTree) -> None:
+def assert_trees_all_equal_shapes_and_dtypes(
+    *trees: PyTree,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
+) -> None:
     """Assert that all PyTrees have identical structure, leaf shapes, and leaf dtypes.
 
     Args:
         *trees: Two or more PyTrees to compare.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
 
     Raises:
-        AssertionError: If structures, leaf shapes, or leaf dtypes differ.
+        Exception: If structures, leaf shapes, or leaf dtypes differ.
     """
     if not are_asserts_enabled():
         return
-    assert_trees_all_equal_shapes(*trees)
-    assert_trees_all_equal_dtypes(*trees)
+    assert_trees_all_equal_shapes(
+        *trees,
+        custom_message=custom_message,
+        custom_message_format_vars=custom_message_format_vars,
+        include_default_message=include_default_message,
+        exception_type=exception_type,
+    )
+    assert_trees_all_equal_dtypes(
+        *trees,
+        custom_message=custom_message,
+        custom_message_format_vars=custom_message_format_vars,
+        include_default_message=include_default_message,
+        exception_type=exception_type,
+    )
 
 
 __all__ = [
@@ -541,6 +853,7 @@ __all__ = [
     "_extract_flat_scalars",
     "assert_tree_all_finite",
     "assert_tree_has_only_ndarrays",
+    "assert_tree_no_nans",
     "assert_tree_no_nones",
     "assert_tree_shape_prefix",
     "assert_tree_shape_suffix",

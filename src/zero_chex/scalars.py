@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 
+from zero_chex.assertions import _raise_chex_error
 from zero_chex.mocks import are_asserts_enabled
 from zero_chex.types import (
     ArrayProtocol,
@@ -57,18 +59,38 @@ def _extract_real_scalar_float(x: PyTree) -> float:
     return float(raw)
 
 
-def assert_scalar(x: Numeric | PyTree) -> None:
+def assert_scalar(
+    x: Numeric | PyTree,
+    *,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
+) -> None:
     """Assert that x is a Python scalar (int, float, complex, bool) or 0-D array.
 
     Args:
         x: The value to check.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
 
     Raises:
-        AssertionError: If assertions are enabled and x is not a scalar.
+        Exception: If assertions are enabled and x is not a scalar.
     """
     if not are_asserts_enabled():
         return
-    _extract_scalar_value(x)
+    try:
+        _extract_scalar_value(x)
+    except AssertionError as exc:
+        _raise_chex_error(
+            str(exc),
+            custom_message=custom_message,
+            custom_message_format_vars=custom_message_format_vars,
+            include_default_message=include_default_message,
+            exception_type=exception_type,
+        )
 
 
 def assert_scalar_in(
@@ -76,6 +98,11 @@ def assert_scalar_in(
     min_: float | int,
     max_: float | int,
     included: bool = True,
+    *,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
 ) -> None:
     """Assert that scalar x lies within the interval bounded by min_ and max_.
 
@@ -84,67 +111,170 @@ def assert_scalar_in(
         min_: Lower bound of the interval.
         max_: Upper bound of the interval.
         included: If True, checks closed interval [min_, max_]; otherwise open (min_, max_).
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
 
     Raises:
-        AssertionError: If x is not a real scalar, is NaN, or falls outside the specified interval.
+        Exception: If x is not a real scalar, is NaN, or falls outside the specified interval.
     """
     if not are_asserts_enabled():
         return
-    val = _extract_real_scalar_float(x)
+    try:
+        val = _extract_real_scalar_float(x)
+    except AssertionError as exc:
+        _raise_chex_error(
+            str(exc),
+            custom_message=custom_message,
+            custom_message_format_vars=custom_message_format_vars,
+            include_default_message=include_default_message,
+            exception_type=exception_type,
+        )
     if included:
         if math.isnan(val) or not (min_ <= val <= max_):
-            raise AssertionError(f"The argument x must be in [{min_}, {max_}], was {val}.")
+            _raise_chex_error(
+                f"The argument x must be in [{min_}, {max_}], was {val}.",
+                custom_message=custom_message,
+                custom_message_format_vars=custom_message_format_vars,
+                include_default_message=include_default_message,
+                exception_type=exception_type,
+            )
     else:
         if math.isnan(val) or not (min_ < val < max_):
-            raise AssertionError(f"The argument x must be in ({min_}, {max_}), was {val}.")
+            _raise_chex_error(
+                f"The argument x must be in ({min_}, {max_}), was {val}.",
+                custom_message=custom_message,
+                custom_message_format_vars=custom_message_format_vars,
+                include_default_message=include_default_message,
+                exception_type=exception_type,
+            )
 
 
-def assert_scalar_negative(x: Numeric | PyTree) -> None:
+def assert_scalar_negative(
+    x: Numeric | PyTree,
+    *,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
+) -> None:
     """Assert that scalar x is strictly negative (x < 0).
 
     Args:
         x: The scalar value to check.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
 
     Raises:
-        AssertionError: If x is not a real scalar, is NaN, or x >= 0.
+        Exception: If x is not a real scalar, is NaN, or x >= 0.
     """
     if not are_asserts_enabled():
         return
-    val = _extract_real_scalar_float(x)
+    try:
+        val = _extract_real_scalar_float(x)
+    except AssertionError as exc:
+        _raise_chex_error(
+            str(exc),
+            custom_message=custom_message,
+            custom_message_format_vars=custom_message_format_vars,
+            include_default_message=include_default_message,
+            exception_type=exception_type,
+        )
     if math.isnan(val) or not (val < 0):
-        raise AssertionError(f"The argument x must be negative, was {val}.")
+        _raise_chex_error(
+            f"The argument x must be negative, was {val}.",
+            custom_message=custom_message,
+            custom_message_format_vars=custom_message_format_vars,
+            include_default_message=include_default_message,
+            exception_type=exception_type,
+        )
 
 
-def assert_scalar_non_negative(x: Numeric | PyTree) -> None:
+def assert_scalar_non_negative(
+    x: Numeric | PyTree,
+    *,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
+) -> None:
     """Assert that scalar x is non-negative (x >= 0).
 
     Args:
         x: The scalar value to check.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
 
     Raises:
-        AssertionError: If x is not a real scalar, is NaN, or x < 0.
+        Exception: If x is not a real scalar, is NaN, or x < 0.
     """
     if not are_asserts_enabled():
         return
-    val = _extract_real_scalar_float(x)
+    try:
+        val = _extract_real_scalar_float(x)
+    except AssertionError as exc:
+        _raise_chex_error(
+            str(exc),
+            custom_message=custom_message,
+            custom_message_format_vars=custom_message_format_vars,
+            include_default_message=include_default_message,
+            exception_type=exception_type,
+        )
     if math.isnan(val) or not (val >= 0):
-        raise AssertionError(f"The argument x must be non-negative, was {val}.")
+        _raise_chex_error(
+            f"The argument x must be non-negative, was {val}.",
+            custom_message=custom_message,
+            custom_message_format_vars=custom_message_format_vars,
+            include_default_message=include_default_message,
+            exception_type=exception_type,
+        )
 
 
-def assert_scalar_positive(x: Numeric | PyTree) -> None:
+def assert_scalar_positive(
+    x: Numeric | PyTree,
+    *,
+    custom_message: str | None = None,
+    custom_message_format_vars: Sequence[Scalar | str] = (),
+    include_default_message: bool = True,
+    exception_type: type[Exception] = AssertionError,
+) -> None:
     """Assert that scalar x is strictly positive (x > 0).
 
     Args:
         x: The scalar value to check.
+        custom_message: Optional user-supplied error message or format string.
+        custom_message_format_vars: Positional format arguments interpolated into custom_message.
+        include_default_message: Whether to include the default error message alongside custom_message.
+        exception_type: Exception class to raise on failure.
 
     Raises:
-        AssertionError: If x is not a real scalar, is NaN, or x <= 0.
+        Exception: If x is not a real scalar, is NaN, or x <= 0.
     """
     if not are_asserts_enabled():
         return
-    val = _extract_real_scalar_float(x)
+    try:
+        val = _extract_real_scalar_float(x)
+    except AssertionError as exc:
+        _raise_chex_error(
+            str(exc),
+            custom_message=custom_message,
+            custom_message_format_vars=custom_message_format_vars,
+            include_default_message=include_default_message,
+            exception_type=exception_type,
+        )
     if math.isnan(val) or not (val > 0):
-        raise AssertionError(f"The argument x must be positive, was {val}.")
+        _raise_chex_error(
+            f"The argument x must be positive, was {val}.",
+            custom_message=custom_message,
+            custom_message_format_vars=custom_message_format_vars,
+            include_default_message=include_default_message,
+            exception_type=exception_type,
+        )
 
 
 __all__ = [

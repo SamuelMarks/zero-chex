@@ -29,6 +29,7 @@ from zero_chex import (
     fake_pmap_and_jit,
     get_err_regex,
     if_args_not_none,
+    ify,
     mappable_dataclass,
     params_product,
     register_dataclass_type_with_jax_tree_util,
@@ -196,6 +197,8 @@ def test_chexify_and_with_jittable_assertions() -> None:
 
     f3 = with_jittable_assertions(lambda x: x + 5, async_check=True)
     f4 = with_jittable_assertions(async_check=False)(lambda x: x + 10)
+    f5 = ify(lambda x: x + 7, async_check=True)
+    f6 = ify(async_check=False)(lambda x: x + 14)
 
     assert f1(3) == 6
     f1.wait_checks()
@@ -240,6 +243,9 @@ def test_chexify_and_with_jittable_assertions() -> None:
     assert f3(3) == 8
     f3.wait_checks()
     assert f4(3) == 13
+    assert f5(3) == 10
+    f5.wait_checks()
+    assert f6(3) == 17
 
 
 def test_taylor_jet_and_assert_numerical_grads() -> None:
@@ -474,6 +480,28 @@ def test_taylor_jet_and_assert_numerical_grads() -> None:
     with pytest.raises(AssertionError, match="Tolerance atol must be non-negative"):
         assert_numerical_grads(algebraic_poly, [2.0, 3.0], atol=-1.0)
 
+    with pytest.raises(
+        ValueError,
+        match=r"\[Chex\] Assertion failed: bad atol -2\.0",
+    ):
+        assert_numerical_grads(
+            algebraic_poly,
+            [2.0, 3.0],
+            atol=-2.0,
+            custom_message="bad atol {}",
+            custom_message_format_vars=(-2.0,),
+            include_default_message=False,
+            exception_type=ValueError,
+        )
+    with pytest.raises(AssertionError, match=r"Tolerance atol must be non-negative, got -1\.0\. \[extra\]"):
+        assert_numerical_grads(
+            algebraic_poly,
+            [2.0, 3.0],
+            atol=-1.0,
+            custom_message="extra",
+            include_default_message=True,
+        )
+
 
 def test_fake_contexts_and_backend_restrictions() -> None:
     """Test fake_jit, fake_pmap, fake_pmap_and_jit, restrict_backends, and set_n_cpu_devices."""
@@ -600,6 +628,9 @@ def test_dataclasses_and_pytree_registration() -> None:
     assert p2.x == 10 and p2.y == 2
     with pytest.raises(TypeError, match="unexpected keyword argument"):
         p.replace(unknown=99)
+    tup = p.to_tuple()
+    assert tup == ((1, 2), ("x", "y"))
+    assert Point.from_tuple(tup) == p
 
     leaves, treedef = tree_flatten(p)
     assert leaves == [1, 2]
@@ -889,3 +920,30 @@ def test_utils_params_product_and_deprecations() -> None:
     extra_args: tuple[int, ...] = (2, 3)
     with pytest.raises(TypeError, match="takes at most 2 arguments"):
         pos_fn(1, *extra_args)
+
+    from zero_chex._src import (
+        asserts_chexify as src_chexify,
+    )
+    from zero_chex._src import (
+        dataclass as src_dc,
+    )
+    from zero_chex._src import (
+        dimensions as src_dims,
+    )
+    from zero_chex._src import (
+        fake as src_fake,
+    )
+    from zero_chex._src import (
+        restrict_backends as src_rb,
+    )
+    from zero_chex._src import (
+        warnings as src_warn,
+    )
+
+    assert src_chexify.chexify is chexify
+    assert src_chexify.ify is ify
+    assert src_dc.dataclass is dataclass
+    assert src_dims.Dimensions.__name__ == "Dimensions"
+    assert src_fake.fake_jit is fake_jit
+    assert src_rb.restrict_backends is restrict_backends
+    assert src_warn.warn_deprecated_function is warn_deprecated_function

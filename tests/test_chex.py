@@ -51,6 +51,7 @@ def test_all_assertions_disabled() -> None:
         chex.assert_tree_is_on_device({"a": x}, platform="tpu")
         chex.assert_tree_is_on_host({"a": x}, allow_cpu_device=False)
         chex.assert_tree_is_sharded({"a": x})
+        chex.assert_tree_no_nans({"a": float("nan")})
         chex.assert_tree_no_nones({"a": None})
         chex.assert_tree_shape_prefix({"a": x}, (9, 9))
         chex.assert_tree_shape_suffix({"a": x}, (9, 9))

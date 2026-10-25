@@ -26,6 +26,7 @@ from zero_chex import (
     assert_tree_is_on_device,
     assert_tree_is_on_host,
     assert_tree_is_sharded,
+    assert_tree_no_nans,
     assert_tree_no_nones,
     assert_tree_shape_prefix,
     assert_tree_shape_suffix,
@@ -216,6 +217,12 @@ def test_single_tree_assertions() -> None:
     with pytest.raises(AssertionError, match="not an ndarray"):
         assert_tree_has_only_ndarrays({"a": 1})
 
+    assert_tree_no_nans({"a": arr, "b": float("inf"), "c": 1 + 2j})
+    with pytest.raises(AssertionError, match="contains NaN value"):
+        assert_tree_no_nans({"a": float("nan")})
+    with pytest.raises(AssertionError, match="contains NaN value"):
+        assert_tree_no_nans({"a": complex(1.0, float("nan"))})
+
     assert_tree_no_nones({"a": arr, "b": 1})
     with pytest.raises(AssertionError, match="Tree is None"):
         assert_tree_no_nones(None)
@@ -283,6 +290,40 @@ def test_multi_tree_assertions() -> None:
     assert _leaf_close(1 + 2j, 1 + 2j)
     assert not _leaf_close(1 + 2j, 1 + 3j)
 
+    # Test ignore_nans across tree assertions
+    nan_tree_1 = {"a": ZeroArray([1.0, float("nan")], shape=(2,)), "b": float("nan")}
+    nan_tree_2 = {"a": ZeroArray([1.0, float("nan")], shape=(2,)), "b": float("nan")}
+    assert_trees_all_close(nan_tree_1, nan_tree_2, ignore_nans=True)
+    assert_trees_all_close_ulp(nan_tree_1, nan_tree_2, maxulp=1, ignore_nans=True)
+    assert_trees_all_equal(nan_tree_1, nan_tree_2, ignore_nans=True)
+    assert_trees_all_equal_comparator(
+        lambda x, y: bool(x == y),
+        lambda x, y: "mismatch",
+        {"a": float("nan"), "b": 2.0},
+        {"a": float("nan"), "b": 2.0},
+        ignore_nans=True,
+    )
+    assert_trees_all_equal_comparator(
+        lambda x, y: True,
+        lambda x, y: "mismatch",
+        {"a": "text"},
+        {"a": "text"},
+        ignore_nans=True,
+    )
+    with pytest.raises(AssertionError, match="Leaves are not equal"):
+        assert_trees_all_equal(
+            {"a": ZeroArray([1.0, float("nan")], shape=(2,))},
+            {"a": ZeroArray([2.0, float("nan")], shape=(2,))},
+            ignore_nans=True,
+        )
+    with pytest.raises(AssertionError, match="ULPs"):
+        assert_trees_all_close_ulp(
+            {"a": ZeroArray([1.0, float("nan")], shape=(2,))},
+            {"a": ZeroArray([5.0, float("nan")], shape=(2,))},
+            maxulp=1,
+            ignore_nans=True,
+        )
+
     # ULP tests across magnitudes (1e-20, 1.0, 1e10, negative, sign boundary across 0, float64 overflow, complex)
     assert_trees_all_close_ulp(t1, t2, maxulp=1)
     assert_trees_all_close_ulp({"a": 1e10}, {"a": _next_float32(1e10, 1)}, maxulp=1)
@@ -338,7 +379,11 @@ def test_multi_tree_assertions() -> None:
 
 
 def test_cross_ecosystem_pytree_integration(tmp_path: pathlib.Path) -> None:
-    """Test zero-chex PyTree assertions and traversal across zero-flax, zero-optax, zero-grain, and zero-orbax."""
+    """Test zero-chex PyTree assertions and traversal across zero-flax, zero-optax, zero-grain, and zero-orbax.
+
+    Args:
+        tmp_path: Pytest temporary directory path for checkpoint persistence.
+    """
     # 1. zero-flax.nnx.State with Param and BatchStat variables & FrozenDict
     w1 = jnp.array([[1.0, 2.0], [3.0, 4.0]])
     b1 = jnp.array([0.5, -0.5])

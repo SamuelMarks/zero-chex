@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import ast
 import os
+import re
 import sys
 import sysconfig
 
@@ -17,7 +18,7 @@ def get_stdlib_modules() -> set[str]:
     """
     stdlib_dir = sysconfig.get_path("stdlib")
     modules: set[str] = set(sys.builtin_module_names)
-    if hasattr(sys, "stdlib_module_names"):
+    if sys.version_info >= (3, 10):
         modules.update(sys.stdlib_module_names)
 
     if stdlib_dir and os.path.exists(stdlib_dir):
@@ -52,20 +53,38 @@ ALLOWED_3RD_PARTY_SRC: frozenset[str] = frozenset(
     }
 )
 ALLOWED_3RD_PARTY_TESTS: frozenset[str] = ALLOWED_3RD_PARTY_SRC | frozenset({"pytest"})
-BANNED_CALL_NAMES: frozenset[str] = frozenset({"cast", "getattr", "setattr"})
+BANNED_CALL_NAMES: frozenset[str] = frozenset({"cast", "getattr", "setattr", "hasattr", "delattr"})
+BANNED_DUNDER_ATTRS: frozenset[str] = frozenset({"__dict__", "__class__", "__bases__", "__mro__", "__subclasses__"})
 BANNED_TYPE_NAMES: frozenset[str] = frozenset({"Any", "object"})
 STDLIB_MODULES: set[str] = get_stdlib_modules()
 
 
+def _is_overload_node(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Check whether a function AST node is decorated with @overload.
+
+    Args:
+        node: Function or async function AST node.
+
+    Returns:
+        True if decorated with @overload.
+    """
+    for dec in node.decorator_list:
+        if isinstance(dec, ast.Name) and dec.id == "overload":
+            return True
+        if isinstance(dec, ast.Attribute) and dec.attr == "overload":
+            return True
+    return False
+
+
 def check_file(filepath: str, is_test_or_script: bool = False) -> bool:
-    """Check a single Python file for disallowed 3rd-party imports and banned typing constructs.
+    """Check a single Python file for disallowed 3rd-party imports, banned typing constructs, and docstrings.
 
     Args:
         filepath: Path to the Python file to inspect.
         is_test_or_script: Whether the file is in tests/ or scripts/ (allowing pytest).
 
     Returns:
-        True if all imports and AST nodes are allowed, False otherwise.
+        True if all imports, AST nodes, and docstrings are valid, False otherwise.
     """
     with open(filepath, encoding="utf-8") as file_handle:
         source_text = file_handle.read()
@@ -85,7 +104,31 @@ def check_file(filepath: str, is_test_or_script: bool = False) -> bool:
     disallowed_found: list[str] = []
     banned_constructs: list[str] = []
 
+    if not ast.get_docstring(tree):
+        banned_constructs.append("Line 1: missing module-level docstring")
+
     for node in ast.walk(tree):
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            if not (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and _is_overload_node(node)):
+                doc = ast.get_docstring(node)
+                if not doc:
+                    banned_constructs.append(f"Line {node.lineno}: '{node.name}' missing docstring")
+                elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    params: list[str] = []
+                    for arg_node in node.args.posonlyargs + node.args.args + node.args.kwonlyargs:
+                        if arg_node.arg not in ("self", "cls"):
+                            params.append(arg_node.arg)
+                    if node.args.vararg is not None:
+                        params.append(node.args.vararg.arg)
+                    if node.args.kwarg is not None:
+                        params.append(node.args.kwarg.arg)
+                    for param_name in params:
+                        pattern = rf"(?:^|\n)\s*\*{{0,2}}{re.escape(param_name)}\s*(?:\([^)]*\))?\s*:"
+                        if not re.search(pattern, doc):
+                            banned_constructs.append(
+                                f"Line {node.lineno}: '{node.name}' missing docstring for param '{param_name}'"
+                            )
+
         if isinstance(node, ast.Import):
             for alias in node.names:
                 base_module = alias.name.split(".")[0]
@@ -106,6 +149,8 @@ def check_file(filepath: str, is_test_or_script: bool = False) -> bool:
                 banned_constructs.append(f"Line {node.lineno}: call to banned function '{node.func.id}()'")
             elif isinstance(node.func, ast.Attribute) and node.func.attr in BANNED_CALL_NAMES:
                 banned_constructs.append(f"Line {node.lineno}: call to banned method '.{node.func.attr}()'")
+        elif isinstance(node, ast.Attribute) and node.attr in BANNED_DUNDER_ATTRS:
+            banned_constructs.append(f"Line {node.lineno}: access to banned dunder attribute '.{node.attr}'")
         elif isinstance(node, (ast.arg, ast.AnnAssign)):
             ann = node.annotation
             if ann is not None:

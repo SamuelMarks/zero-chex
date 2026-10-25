@@ -158,3 +158,11 @@ def test_assert_scalar_positive() -> None:
         assert_scalar_positive(float("nan"))
     with pytest.raises(AssertionError, match="must be a real scalar"):
         assert_scalar_positive(1 + 2j)
+    with pytest.raises(ValueError, match=r"\[Chex\] Assertion failed: expected > 0, got -3"):
+        assert_scalar_positive(
+            -3,
+            custom_message="expected > 0, got {}",
+            custom_message_format_vars=(-3,),
+            include_default_message=False,
+            exception_type=ValueError,
+        )

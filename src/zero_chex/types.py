@@ -6,7 +6,22 @@ import math
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Protocol, Union, runtime_checkable
 
-from ml_switcheroo_ir import DType
+from ml_switcheroo_compiler.core.dtype import DType as CompilerDType
+from ml_switcheroo_compiler.core.tensor import Tensor as CompilerTensor
+from ml_switcheroo_ir import DType, LogicalNode, SymInt, SymNode, TensorShape, TensorSpec
+from zero_flax.nnx.variables import Variable as FlaxVariable
+from zero_grain.shared_memory_array import SharedMemoryArray, SharedMemoryArrayMetadata
+from zero_jax.numpy import ndarray as JaxNdarray
+
+
+@runtime_checkable
+class TaylorScalarProtocol(Protocol):
+    """Protocol for forward-mode Taylor polynomial scalars supporting float conversion."""
+
+    def __float__(self) -> float:
+        """Return the primal floating-point value."""
+        ...
+
 
 Scalar = Union[int, float, complex, bool]
 NestedScalarSequence = Sequence[Union[Scalar, "NestedScalarSequence"]]
@@ -14,6 +29,34 @@ if TYPE_CHECKING:
     from builtins import ellipsis as EllipsisType
 else:
     EllipsisType = type(Ellipsis)
+
+_VALID_DTYPE_NAMES: frozenset[str] = frozenset(
+    {
+        "bool",
+        "bool_",
+        "int",
+        "int4",
+        "int8",
+        "int16",
+        "int32",
+        "int64",
+        "uint",
+        "uint4",
+        "uint8",
+        "uint16",
+        "uint32",
+        "uint64",
+        "float",
+        "float16",
+        "float32",
+        "float64",
+        "bfloat16",
+        "complex",
+        "complex64",
+        "complex128",
+        "str",
+    }
+)
 
 
 @runtime_checkable
@@ -57,6 +100,15 @@ class ShardingProtocol(Protocol):
 
 
 @runtime_checkable
+class ToListProtocol(Protocol):
+    """Protocol for array objects exposing a zero-argument `to_list()` method."""
+
+    def to_list(self) -> Sequence[Scalar]:
+        """Return the flattened scalar elements of the array."""
+        ...
+
+
+@runtime_checkable
 class ArrayProtocol(Protocol):
     """Protocol for n-dimensional array and tensor objects."""
 
@@ -66,7 +118,7 @@ class ArrayProtocol(Protocol):
         ...
 
     @property
-    def dtype(self) -> DType | DTypeLikeProtocol | str | type[Scalar]:
+    def dtype(self) -> DType | CompilerDType | DTypeLikeProtocol | str | type[Scalar]:
         """Return the element data type of the array."""
         ...
 
@@ -80,17 +132,87 @@ class ArrayProtocol(Protocol):
         """Return the number of dimensions (rank) of the array."""
         ...
 
+
+@runtime_checkable
+class VariableLeafProtocol(Protocol):
+    """Protocol for NNX-style Variable leaf containers wrapping an inner array or scalar value."""
+
     @property
-    def sharding(self) -> ShardingProtocol | None:
-        """Return the sharding configuration of the array, if any."""
+    def value(self) -> PyTree:
+        """Return the underlying array or scalar value stored in the variable."""
         ...
 
-    def devices(self) -> Sequence[DeviceProtocol]:
-        """Return the sequence of devices on which this array resides."""
+    def copy(self) -> VariableLeafProtocol:
+        """Return a shallow copy of the variable container."""
         ...
 
-    def to_list(self) -> list[Scalar]:
-        """Return the flattened scalar elements of the array."""
+    def replace(self, value: PyTree | None = None) -> VariableLeafProtocol:
+        """Return a new variable container with an updated value."""
+        ...
+
+
+@runtime_checkable
+class NamedTuplePyTreeProtocol(Protocol):
+    """Protocol for NamedTuple PyTree containers such as zero-optax OptState tuples."""
+
+    @property
+    def _fields(self) -> tuple[str, ...]:
+        """Return the tuple of field names in the NamedTuple."""
+        ...
+
+    @classmethod
+    def _make(cls, iterable: Sequence[PyTree]) -> NamedTuplePyTreeProtocol:
+        """Construct a new NamedTuple instance from a sequence of field values.
+
+        Args:
+            iterable: Sequence of field values matching `_fields`.
+
+        Returns:
+            Reconstructed NamedTuple instance.
+        """
+        ...
+
+    def __len__(self) -> int:
+        """Return the number of fields in the NamedTuple."""
+        ...
+
+    def __iter__(self) -> Iterator[PyTree]:
+        """Iterate over the field values in the NamedTuple."""
+        ...
+
+
+@runtime_checkable
+class OptStateLeafProtocol(Protocol):
+    """Protocol for zero-optax dataclass OptState leaf containers exposing `_fields`."""
+
+    @property
+    def _fields(self) -> tuple[str, ...]:
+        """Return the tuple of field names defined on the state class."""
+        ...
+
+
+@runtime_checkable
+class StateMappingProtocol(Protocol):
+    """Protocol for custom mapping PyTree containers such as Flax State and FrozenDict."""
+
+    def __init__(self, mapping: Mapping[str, PyTree] | None = None) -> None:
+        """Initialize the mapping container from a dictionary of child entries."""
+        ...
+
+    def keys(self) -> Iterable[DictKey]:
+        """Return an iterable over the mapping keys."""
+        ...
+
+    def __getitem__(self, key: DictKey) -> PyTree:
+        """Retrieve a child PyTree value by key."""
+        ...
+
+    def __len__(self) -> int:
+        """Return the number of entries in the mapping."""
+        ...
+
+    def __iter__(self) -> Iterator[DictKey]:
+        """Iterate over the keys in the mapping."""
         ...
 
 
@@ -99,7 +221,7 @@ class ShapeOnlyProtocol(Protocol):
     """Protocol for lightweight array-like objects that expose at least a shape tuple."""
 
     @property
-    def shape(self) -> tuple[int, ...]:
+    def shape(self) -> tuple[int, ...] | TensorShape:
         """Return the shape tuple of the array-like object."""
         ...
 
@@ -109,7 +231,7 @@ class DTypeAttrProtocol(Protocol):
     """Protocol for objects that expose a dtype attribute."""
 
     @property
-    def dtype(self) -> DType | DTypeLikeProtocol | str | type[Scalar]:
+    def dtype(self) -> DType | CompilerDType | DTypeLikeProtocol | str | type[Scalar]:
         """Return the dtype of the object."""
         ...
 
@@ -280,7 +402,7 @@ class ZeroArray:
     def __init__(
         self,
         data: NestedScalarSequence | Scalar,
-        shape: Sequence[int] | None = None,
+        shape: Sequence[int] | TensorShape | None = None,
         dtype: DType | DTypeLikeProtocol | str | type[Scalar] = DType.float32,
         device: DeviceProtocol | Sequence[DeviceProtocol] | None = None,
         sharding: ShardingProtocol | None = None,
@@ -289,7 +411,7 @@ class ZeroArray:
 
         Args:
             data: Scalar or (optionally nested) sequence of scalar elements.
-            shape: Explicit shape tuple. If None, inferred from data.
+            shape: Explicit shape tuple or TensorShape. If None, inferred from data.
             dtype: Data type of the array elements.
             device: Device or sequence of devices where the array resides.
             sharding: Optional sharding descriptor for distributed arrays.
@@ -299,7 +421,12 @@ class ZeroArray:
         """
         self._flat, inferred_shape = _flatten_nested_data(data)
 
-        self._shape: tuple[int, ...] = tuple(shape) if shape is not None else inferred_shape
+        if isinstance(shape, TensorShape):
+            self._shape: tuple[int, ...] = shape.static_shape
+        elif shape is not None:
+            self._shape = tuple(shape)
+        else:
+            self._shape = inferred_shape
         expected_size = math.prod(self._shape) if self._shape else 1
         if len(self._flat) == 1 and expected_size > 1:
             self._flat = self._flat * expected_size
@@ -318,9 +445,28 @@ class ZeroArray:
         self._sharding = sharding
 
     @classmethod
+    def from_tensor_spec(
+        cls,
+        spec: TensorSpec,
+        device: DeviceProtocol | Sequence[DeviceProtocol] | None = None,
+        sharding: ShardingProtocol | None = None,
+    ) -> ZeroArray:
+        """Create a ZeroArray matching an ml-switcheroo-ir TensorSpec.
+
+        Args:
+            spec: TensorSpec providing static shape and dtype.
+            device: Optional device placement.
+            sharding: Optional sharding descriptor.
+
+        Returns:
+            A zero-initialized ZeroArray matching spec.
+        """
+        return cls.zeros(spec.static_shape, dtype=spec.dtype, device=device, sharding=sharding)
+
+    @classmethod
     def zeros(
         cls,
-        shape: int | Sequence[int],
+        shape: int | Sequence[int] | TensorShape,
         dtype: DType | DTypeLikeProtocol | str | type[Scalar] = DType.float32,
         device: DeviceProtocol | Sequence[DeviceProtocol] | None = None,
         sharding: ShardingProtocol | None = None,
@@ -328,7 +474,7 @@ class ZeroArray:
         """Create a ZeroArray filled with zeros.
 
         Args:
-            shape: Dimension integer or sequence of dimension integers.
+            shape: Dimension integer, sequence of dimension integers, or TensorShape.
             dtype: Desired data type of the array.
             device: Optional device placement.
             sharding: Optional sharding configuration.
@@ -336,7 +482,12 @@ class ZeroArray:
         Returns:
             A new ZeroArray filled with 0.0 or 0.
         """
-        shape_tuple = (shape,) if isinstance(shape, int) else tuple(shape)
+        if isinstance(shape, TensorShape):
+            shape_tuple = shape.static_shape
+        elif isinstance(shape, int):
+            shape_tuple = (shape,)
+        else:
+            shape_tuple = tuple(shape)
         fill: Scalar = 0 if dtype in (DType.int32, DType.int64, int, "int32", "int64") else 0.0
         total = math.prod(shape_tuple) if shape_tuple else 1
         return cls([fill] * total, shape=shape_tuple, dtype=dtype, device=device, sharding=sharding)
@@ -344,7 +495,7 @@ class ZeroArray:
     @classmethod
     def ones(
         cls,
-        shape: int | Sequence[int],
+        shape: int | Sequence[int] | TensorShape,
         dtype: DType | DTypeLikeProtocol | str | type[Scalar] = DType.float32,
         device: DeviceProtocol | Sequence[DeviceProtocol] | None = None,
         sharding: ShardingProtocol | None = None,
@@ -352,7 +503,7 @@ class ZeroArray:
         """Create a ZeroArray filled with ones.
 
         Args:
-            shape: Dimension integer or sequence of dimension integers.
+            shape: Dimension integer, sequence of dimension integers, or TensorShape.
             dtype: Desired data type of the array.
             device: Optional device placement.
             sharding: Optional sharding configuration.
@@ -360,10 +511,32 @@ class ZeroArray:
         Returns:
             A new ZeroArray filled with 1.0 or 1.
         """
-        shape_tuple = (shape,) if isinstance(shape, int) else tuple(shape)
+        if isinstance(shape, TensorShape):
+            shape_tuple = shape.static_shape
+        elif isinstance(shape, int):
+            shape_tuple = (shape,)
+        else:
+            shape_tuple = tuple(shape)
         fill: Scalar = 1 if dtype in (DType.int32, DType.int64, int, "int32", "int64") else 1.0
         total = math.prod(shape_tuple) if shape_tuple else 1
         return cls([fill] * total, shape=shape_tuple, dtype=dtype, device=device, sharding=sharding)
+
+    def to_tensor_spec(self) -> TensorSpec:
+        """Convert this ZeroArray's metadata into an ml-switcheroo-ir TensorSpec.
+
+        Returns:
+            TensorSpec with matching shape and normalized DType.
+        """
+        norm_dt = self._dtype if isinstance(self._dtype, DType) else DType.float32
+        if isinstance(self._dtype, str):
+            norm_dt = DType.from_str(self._dtype)
+        elif self._dtype is int:
+            norm_dt = DType.int32
+        elif self._dtype is bool:
+            norm_dt = DType.bool
+        elif self._dtype is complex:
+            norm_dt = DType.complex64
+        return TensorSpec(shape=self._shape, dtype=norm_dt)
 
     @property
     def shape(self) -> tuple[int, ...]:
@@ -457,7 +630,7 @@ class ZeroArray:
             True if shapes and all elements are equal.
         """
         if isinstance(other, ArrayProtocol):
-            return self._shape == other.shape and self._flat == list(other.to_list())
+            return self._shape == other.shape and self._flat == _extract_flat_scalars(other)
         if isinstance(other, (int, float, complex, bool)) and self.size == 1:
             return self._flat[0] == other
         return False
@@ -479,15 +652,23 @@ class ZeroArray:
         return f"ZeroArray(shape={self._shape}, dtype={self._dtype!r}, data={self._flat!r})"
 
 
+DictKey = Union[str, int, tuple[Union[str, int], ...]]
+CustomNodeType = Union[
+    type[MappableDataclassProtocol],
+    type[NamedTuplePyTreeProtocol],
+    type[StateMappingProtocol],
+]
+
+
 class PyTreeDef:
     """Structural definition of a flattened PyTree hierarchy."""
 
     def __init__(
         self,
         node_type: str = "leaf",
-        keys: tuple[str | int, ...] = (),
+        keys: tuple[DictKey, ...] = (),
         children: tuple[PyTreeDef, ...] = (),
-        custom_cls: type[MappableDataclassProtocol] | None = None,
+        custom_cls: CustomNodeType | None = None,
     ) -> None:
         """Initialize a PyTreeDef node.
 
@@ -495,7 +676,7 @@ class PyTreeDef:
             node_type: Identifier for the container kind ('leaf', 'list', 'tuple', 'dict', 'custom').
             keys: Mapping or field keys associated with children.
             children: Child PyTreeDef structures.
-            custom_cls: Registered custom dataclass type if node_type is 'custom'.
+            custom_cls: Registered custom dataclass, NamedTuple, or State mapping type if applicable.
         """
         self._node_type = node_type
         self._keys = keys
@@ -512,11 +693,11 @@ class PyTreeDef:
         return self._node_type
 
     @property
-    def keys(self) -> tuple[str | int, ...]:
+    def keys(self) -> tuple[DictKey, ...]:
         """Return the keys associated with child nodes.
 
         Returns:
-            Tuple of string or integer keys.
+            Tuple of string, integer, or tuple keys.
         """
         return self._keys
 
@@ -530,8 +711,8 @@ class PyTreeDef:
         return self._children
 
     @property
-    def custom_cls(self) -> type[MappableDataclassProtocol] | None:
-        """Return the custom dataclass type if applicable.
+    def custom_cls(self) -> CustomNodeType | None:
+        """Return the custom container class type if applicable.
 
         Returns:
             Custom class type or None.
@@ -599,14 +780,32 @@ class ChexifyChecks:
     all: frozenset[str] = frozenset({"user", "nan", "index", "div"})
 
 
-Array = Union[ArrayProtocol, ShapeOnlyProtocol]
-ArrayBatched = Union[ArrayProtocol, ShapeOnlyProtocol]
-ArrayDevice = Union[ArrayProtocol, ShapeOnlyProtocol]
-ArrayNumpy = Union[ArrayProtocol, ShapeOnlyProtocol]
-ArraySharded = Union[ArrayProtocol, ShapeOnlyProtocol]
-Numeric = Union[Array, Scalar]
-Shape = Sequence[int]
-ArrayDType = Union[DType, DTypeLikeProtocol, str, type[Scalar], type]
+Array = Union[
+    ZeroArray,
+    CompilerTensor,
+    JaxNdarray,
+    ArrayProtocol,
+    ShapeOnlyProtocol,
+    TensorSpec,
+    LogicalNode,
+]
+ArrayBatched = Array
+ArrayDevice = Array
+ArrayNumpy = Array
+ArraySharded = Union[ZeroArray, ShardingAttrProtocol, Array]
+Numeric = Union[
+    Array,
+    FlaxVariable[Union[CompilerTensor, JaxNdarray, ZeroArray, Scalar]],
+    VariableLeafProtocol,
+    SharedMemoryArray,
+    SharedMemoryArrayMetadata,
+    Scalar,
+    TaylorScalarProtocol,
+    SymInt,
+    SymNode,
+]
+Shape = Union[Sequence[int], TensorShape]
+ArrayDType = Union[DType, CompilerDType, DTypeLikeProtocol, str, type[Scalar], type[str]]
 PRNGKey = Union[tuple[int, int], Array]
 LeafValue = Union[
     Numeric,
@@ -616,35 +815,89 @@ LeafValue = Union[
     DevicesMethodProtocol,
     ShardingAttrProtocol,
     DTypeAttrProtocol,
+    OptStateLeafProtocol,
+    ToListProtocol,
 ]
 
 ArrayTree = Union[
     LeafValue,
     Iterable["ArrayTree"],
-    Mapping[str, "ArrayTree"],
+    Mapping[DictKey, "ArrayTree"],
     MappableDataclassProtocol,
+    NamedTuplePyTreeProtocol,
+    StateMappingProtocol,
 ]
 ArrayDeviceTree = Union[
     LeafValue,
     Iterable["ArrayDeviceTree"],
-    Mapping[str, "ArrayDeviceTree"],
+    Mapping[DictKey, "ArrayDeviceTree"],
     MappableDataclassProtocol,
+    NamedTuplePyTreeProtocol,
+    StateMappingProtocol,
 ]
 ArrayNumpyTree = Union[
     LeafValue,
     Iterable["ArrayNumpyTree"],
-    Mapping[str, "ArrayNumpyTree"],
+    Mapping[DictKey, "ArrayNumpyTree"],
     MappableDataclassProtocol,
+    NamedTuplePyTreeProtocol,
+    StateMappingProtocol,
 ]
 PyTree = Union[
     LeafValue,
     Iterable["PyTree"],
-    Mapping[str, "PyTree"],
+    Mapping[DictKey, "PyTree"],
     MappableDataclassProtocol,
+    NamedTuplePyTreeProtocol,
+    StateMappingProtocol,
 ]
 
-TDimMatcher = Union[int, set[int], tuple[int, ...], EllipsisType, None]
+TDimMatcher = Union[int, set[int], tuple[int, ...], str, EllipsisType, None]
 TShapeMatcher = Sequence[TDimMatcher]
+
+
+def _extract_flat_scalars(leaf: PyTree) -> list[Scalar]:
+    """Extract a flat list of scalar values from a leaf array, Variable, or scalar.
+
+    Args:
+        leaf: Array, Variable, or scalar leaf value.
+
+    Returns:
+        Flat list of numeric scalars.
+    """
+    if isinstance(leaf, VariableLeafProtocol):
+        return _extract_flat_scalars(leaf.value)
+    if isinstance(leaf, CompilerTensor):
+        if leaf.ndim == 0:
+            return [leaf.item()]
+        out: list[Scalar] = []
+        for sub_tensor in leaf:
+            out.extend(_extract_flat_scalars(sub_tensor))
+        return out
+    if isinstance(leaf, JaxNdarray):
+        raw_list = leaf.tolist()
+        flat_items, _ = _flatten_nested_data(raw_list) if isinstance(raw_list, list) else ([raw_list], ())
+        return flat_items
+    if isinstance(leaf, (int, float, complex, bool)):
+        return [leaf]
+    if isinstance(leaf, ToListProtocol):
+        return list(leaf.to_list())
+    return []
+
+
+def _has_valid_shape_tuple(val: ShapeOnlyProtocol) -> bool:
+    """Check whether a ShapeOnlyProtocol object has a valid shape tuple or TensorShape.
+
+    Args:
+        val: Candidate object exposing `.shape`.
+
+    Returns:
+        True if `val.shape` is a TensorShape or a tuple of non-negative integers.
+    """
+    raw_shape = val.shape
+    if isinstance(raw_shape, TensorShape):
+        return True
+    return all(not isinstance(d, bool) and d >= 0 for d in raw_shape)
 
 
 def is_scalar(val: PyTree) -> bool:
@@ -654,25 +907,41 @@ def is_scalar(val: PyTree) -> bool:
         val: Value to inspect.
 
     Returns:
-        True if val is a Python int, float, complex, bool, or 0-D array.
+        True if val is a Python int, float, complex, bool, SymInt, or 0-D array.
     """
-    if isinstance(val, (int, float, complex, bool)):
+    if isinstance(val, VariableLeafProtocol):
+        return is_scalar(val.value)
+    if isinstance(val, (int, float, complex, bool, SymInt, SymNode)):
         return True
-    if isinstance(val, (ArrayProtocol, ShapeOnlyProtocol)):
+    if isinstance(val, TensorSpec):
+        return len(val.shape) == 0
+    if isinstance(val, ArrayProtocol):
         return val.shape == ()
+    if isinstance(val, ShapeOnlyProtocol) and _has_valid_shape_tuple(val):
+        raw_s = val.shape
+        return (len(raw_s.dims) == 0) if isinstance(raw_s, TensorShape) else (raw_s == ())
     return False
 
 
 def is_array(val: PyTree) -> bool:
-    """Check whether a value satisfies the ArrayProtocol interface.
+    """Check whether a value satisfies the ArrayProtocol, VariableLeafProtocol, or TensorSpec interface.
 
     Args:
         val: Value to inspect.
 
     Returns:
-        True if val implements ArrayProtocol.
+        True if val implements ArrayProtocol, VariableLeafProtocol, SharedMemoryArray, or TensorSpec.
     """
-    return isinstance(val, ArrayProtocol)
+    return isinstance(
+        val,
+        (
+            ArrayProtocol,
+            VariableLeafProtocol,
+            SharedMemoryArray,
+            SharedMemoryArrayMetadata,
+            TensorSpec,
+        ),
+    )
 
 
 __all__ = [
@@ -687,16 +956,25 @@ __all__ = [
     "ArraySharded",
     "ArrayTree",
     "ChexifyChecks",
+    "CompilerDType",
+    "CompilerTensor",
+    "CustomNodeType",
+    "DType",
     "DTypeAttrProtocol",
     "DTypeLikeProtocol",
     "Device",
     "DeviceProtocol",
     "DevicesMethodProtocol",
+    "DictKey",
     "EllipsisType",
+    "FlaxVariable",
+    "JaxNdarray",
     "LeafValue",
     "MappableDataclassProtocol",
+    "NamedTuplePyTreeProtocol",
     "NestedScalarSequence",
     "Numeric",
+    "OptStateLeafProtocol",
     "PRNGKey",
     "PmapSharding",
     "PyTree",
@@ -704,11 +982,21 @@ __all__ = [
     "Scalar",
     "Shape",
     "ShapeOnlyProtocol",
+    "SharedMemoryArray",
+    "SharedMemoryArrayMetadata",
     "ShardingAttrProtocol",
     "ShardingProtocol",
+    "StateMappingProtocol",
     "TDimMatcher",
     "TShapeMatcher",
+    "TaylorScalarProtocol",
+    "ToListProtocol",
+    "VariableLeafProtocol",
     "ZeroArray",
+    "_VALID_DTYPE_NAMES",
+    "_extract_flat_scalars",
+    "_flatten_nested_data",
+    "_has_valid_shape_tuple",
     "is_array",
     "is_scalar",
 ]

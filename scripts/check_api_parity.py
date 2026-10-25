@@ -99,8 +99,8 @@ def main() -> None:
                 snap_params = extract_snapshot_param_names(chex_info.get("signature", "()"))
                 if snap_params and zero_params[: len(snap_params)] != snap_params:
                     errors.append(f"{name} parameter mismatch: snapshot={snap_params}, zero={zero_params}")
-            except (ValueError, TypeError):
-                pass
+            except (ValueError, TypeError) as exc:
+                errors.append(f"{name} signature inspection failed: {exc}")
 
     if errors:
         print("API Parity Check Failed:")

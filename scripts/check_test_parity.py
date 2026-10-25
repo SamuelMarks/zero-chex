@@ -1,4 +1,4 @@
-"""Verify that all functions in chex_api_snapshot.json are exercised in tests/."""
+"""Verify that all symbols in chex_api_snapshot.json are exercised in enabled-assertion tests/."""
 
 from __future__ import annotations
 
@@ -8,63 +8,51 @@ import os
 import sys
 
 
-def get_called_names(node: ast.AST) -> set[str]:
-    """Collect all function and decorator names referenced within an AST subtree.
+def get_referenced_names(node: ast.AST) -> set[str]:
+    """Collect all function, class, type alias, and decorator names referenced within an AST subtree.
 
     Args:
         node: The root AST node to walk.
 
     Returns:
-        A set of called function and decorator identifier names.
+        A set of referenced identifier names.
     """
-    called: set[str] = set()
+    referenced: set[str] = set()
     for child in ast.walk(node):
-        if isinstance(child, ast.Call):
-            if isinstance(child.func, ast.Name):
-                called.add(child.func.id)
-            elif isinstance(child.func, ast.Attribute):
-                called.add(child.func.attr)
-        elif isinstance(child, (ast.FunctionDef, ast.ClassDef)):
-            for dec in child.decorator_list:
-                if isinstance(dec, ast.Name):
-                    called.add(dec.id)
-                elif isinstance(dec, ast.Attribute):
-                    called.add(dec.attr)
-                elif isinstance(dec, ast.Call):
-                    if isinstance(dec.func, ast.Name):
-                        called.add(dec.func.id)
-                    elif isinstance(dec.func, ast.Attribute):
-                        called.add(dec.func.attr)
-    return called
+        if isinstance(child, ast.Name):
+            referenced.add(child.id)
+        elif isinstance(child, ast.Attribute):
+            referenced.add(child.attr)
+    return referenced
 
 
 def main() -> None:
-    """Check that every function in chex_api_snapshot.json is called in tests/."""
+    """Check that every symbol in chex_api_snapshot.json is exercised in tests/ (excluding test_chex.py)."""
     with open("chex_api_snapshot.json", encoding="utf-8") as file_handle:
         api: dict[str, dict[str, str]] = json.load(file_handle)
 
-    funcs = {k for k, v in api.items() if v.get("kind") == "function"}
+    all_symbols = set(api.keys())
 
     tests_dir = "tests"
     covered: set[str] = set()
 
     for root, _, files in os.walk(tests_dir):
         for file in files:
-            if file.endswith(".py"):
+            if file.endswith(".py") and file != "test_chex.py":
                 path = os.path.join(root, file)
                 with open(path, encoding="utf-8") as file_handle:
                     try:
                         tree = ast.parse(file_handle.read(), filename=path)
                         for node in ast.walk(tree):
                             if isinstance(node, ast.FunctionDef) and node.name.startswith("test_"):
-                                called = get_called_names(node)
-                                covered.update(called.intersection(funcs))
+                                refs = get_referenced_names(node)
+                                covered.update(refs.intersection(all_symbols))
                             elif isinstance(node, ast.Module):
-                                covered.update(get_called_names(node).intersection(funcs))
+                                covered.update(get_referenced_names(node).intersection(all_symbols))
                     except SyntaxError as exc:
                         print(f"Failed to parse {path}: {exc}")
 
-    missing = funcs - covered
+    missing = all_symbols - covered
 
     if missing:
         print("Missing tests for:")

@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import collections.abc
 import dataclasses
+import math
 import warnings
 from collections.abc import Sequence
 
 import pytest
+from ml_switcheroo_ir import DType
 
 from zero_chex import (
     ChexifyChecks,
+    TestCase,
     assert_max_traces,
     assert_numerical_grads,
     assert_scalar_positive,
@@ -31,6 +34,7 @@ from zero_chex import (
     register_dataclass_type_with_jax_tree_util,
     restrict_backends,
     set_n_cpu_devices,
+    variants,
     warn_deprecated_function,
     warn_keyword_args_only_in_future,
     warn_only_n_pos_args_in_future,
@@ -44,8 +48,11 @@ from zero_chex.dataclasses import (
 )
 from zero_chex.mocks import (
     FakeContext,
+    _abstract_arg_signature,
     _fake_pmap_impl,
+    _invoke_differentiable,
     _scalar_from_numeric,
+    _TaylorJet,
     are_asserts_enabled,
 )
 from zero_chex.types import MappableDataclassProtocol, Numeric, PyTree, PyTreeDef, ZeroArray
@@ -188,6 +195,7 @@ def test_chexify_and_with_jittable_assertions() -> None:
         return 1.0
 
     f3 = with_jittable_assertions(lambda x: x + 5, async_check=True)
+    f4 = with_jittable_assertions(async_check=False)(lambda x: x + 10)
 
     assert f1(3) == 6
     f1.wait_checks()
@@ -201,6 +209,7 @@ def test_chexify_and_with_jittable_assertions() -> None:
     f2.wait_checks()
     with pytest.raises(AssertionError, match="division by zero"):
         f2(0.0)
+    f2.wait_checks()
 
     assert f_nan(0) == 1.0
     with pytest.raises(AssertionError, match="NaN/Inf check failed"):
@@ -216,6 +225,8 @@ def test_chexify_and_with_jittable_assertions() -> None:
     assert f_complex_nan(False) == 1.0 + 2.0j
     with pytest.raises(AssertionError, match="NaN/Inf check failed"):
         f_complex_nan(True)
+    with pytest.raises(AssertionError, match="NaN/Inf check failed"):
+        block_until_chexify_assertions_complete()
     block_until_chexify_assertions_complete()
 
     assert f_unhandled_errs(0) == 1.0
@@ -228,10 +239,36 @@ def test_chexify_and_with_jittable_assertions() -> None:
 
     assert f3(3) == 8
     f3.wait_checks()
+    assert f4(3) == 13
 
 
-def test_assert_numerical_grads() -> None:
-    """Test assert_numerical_grads on scalar, multi-element array, higher-order, and analytical mismatch cases."""
+def test_taylor_jet_and_assert_numerical_grads() -> None:
+    """Test _TaylorJet arithmetic and assert_numerical_grads on scalar, array, PyTree, and higher-order cases."""
+    j_var = _TaylorJet.variable(2.0, 3)
+    j_zero = _TaylorJet.variable(2.0, 0)
+    assert j_zero.order == 0
+    assert j_var.derivative(-1) == 0.0
+    assert j_var.derivative(99) == 0.0
+    assert float(+j_var) == 2.0
+    assert float(-j_var) == -2.0
+
+    # Test jet arithmetic with different orders and scalar operands
+    j_short = _TaylorJet.constant(3.0, 1)
+    assert float(j_var + j_short) == 5.0
+    assert float(3.0 + j_var) == 5.0
+    assert float(j_var - 1.0) == 1.0
+    assert float(10.0 - j_var) == 8.0
+    assert float(3.0 * j_var) == 6.0
+    assert (j_var**0).derivative(0) == 1.0
+    assert (j_var**-1).derivative(1) == pytest.approx(-0.25)
+    assert (j_var**1.5).derivative(1) == pytest.approx(1.5 * (2.0**0.5))
+    assert (1.0 / j_var).derivative(1) == pytest.approx(-0.25)
+    assert (j_short / j_var).derivative(0) == pytest.approx(1.5)
+    assert math.isnan((j_var / 0.0).derivative(0))
+    j_neg = _TaylorJet.variable(-2.0, 2)
+    assert math.isnan((j_neg**1.5).derivative(0))
+
+    assert _scalar_from_numeric(_TaylorJet.constant(5.0, 1)) == 5.0
     assert _scalar_from_numeric(3.0) == 3.0
     assert _scalar_from_numeric(2 + 0j) == 2.0
     assert _scalar_from_numeric(ZeroArray(4.0)) == 4.0
@@ -253,35 +290,104 @@ def test_assert_numerical_grads() -> None:
     assert _scalar_from_numeric(dummy_shape) == 0.0
     assert _scalar_from_numeric(ZeroArray([1.0], shape=(0,))) == 0.0
 
-    def poly_fn(x: Numeric, y: Numeric) -> Numeric:
-        """Compute x^3 + 2*y^2.
+    sig_str = _abstract_arg_signature(
+        (ZeroArray(1.0), _DummyShapeOnly(), {"a": ZeroArray(2.0), "b": 3}, 5),
+        {"k1": ZeroArray(1.0), "k2": "v"},
+    )
+    assert "arr:" in sig_str and "tree:" in sig_str
+
+    def algebraic_poly(x: Numeric, y: Numeric) -> Numeric:
+        """Compute x^3 + 2*y^2 directly using algebraic operators so _TaylorJet propagates.
 
         Args:
             x: First numeric input.
             y: Second numeric input.
 
         Returns:
-            Polynomial scalar evaluation.
+            Polynomial evaluation.
         """
+        if isinstance(x, (int, float, _TaylorJet)) and isinstance(y, (int, float, _TaylorJet)):
+            return x**3 + 2.0 * (y**2)
         vx = _scalar_from_numeric(x)
         vy = _scalar_from_numeric(y)
         return vx * vx * vx + 2.0 * vy * vy
 
-    assert_numerical_grads(poly_fn, [2.0, 3.0], order=1, atol=1e-3)
-    assert_numerical_grads(poly_fn, [2.0, 3.0], order=2, atol=1e-2)
-    assert_numerical_grads(poly_fn, [ZeroArray([1.5, 2.5], shape=(2,)), 1.0], order=1, atol=1e-2)
+    def const_scalar_fn(x: Numeric) -> Numeric:
+        """Return constant 5.0 regardless of x.
+
+        Args:
+            x: Input numeric value.
+
+        Returns:
+            Constant 5.0.
+        """
+        _ = x
+        return 5.0
+
+    def type_checking_fn(x: Numeric) -> Numeric:
+        """Raise TypeError on _TaylorJet to exercise fallback derivative path.
+
+        Args:
+            x: Input numeric value.
+
+        Returns:
+            x^2 as float.
+        """
+        if isinstance(x, _TaylorJet):
+            raise TypeError("Requires float")
+        vx = _scalar_from_numeric(x)
+        return vx * vx
+
+    assert_numerical_grads(algebraic_poly, [2.0, 3.0], order=1, atol=1e-3)
+    assert_numerical_grads(algebraic_poly, [2.0, 3.0], order=2, atol=1e-2)
+    assert_numerical_grads(algebraic_poly, [2.0, 3.0], order=3, atol=5e-2)
+    assert_numerical_grads(const_scalar_fn, [2.0], order=1, atol=1e-4)
+    assert_numerical_grads(type_checking_fn, [2.0], order=1, atol=1e-3)
+    assert_numerical_grads(algebraic_poly, [ZeroArray([1.5, 2.5], shape=(2,)), 1.0], order=1, atol=1e-2)
+
+    def pytree_fn(tree_arg: PyTree) -> PyTree:
+        """Compute squared leaves for a dict PyTree argument.
+
+        Args:
+            tree_arg: Dictionary PyTree with numeric leaves.
+
+        Returns:
+            Dictionary with squared float values.
+        """
+        if isinstance(tree_arg, dict):
+            a_val = _scalar_from_numeric(tree_arg["a"])
+            b_val = _scalar_from_numeric(tree_arg["b"])
+            return {"a": a_val * a_val, "b": 2.0 * b_val}
+        return 0.0
+
+    assert_numerical_grads(pytree_fn, [{"a": 3.0, "b": ZeroArray([1.0, 2.0], shape=(2,))}], order=1, atol=1e-2)
+    assert _invoke_differentiable(pytree_fn, [{"a": 2.0, "b": 3.0}]) == {"a": 4.0, "b": 6.0}
 
     class _CorrectAnalyticalFn:
         """Callable with an exact analytical .grad() method."""
 
         def __call__(self, *args: Numeric) -> Numeric:
-            """Compute x^2 + 3*y."""
+            """Compute x^2 + 3*y.
+
+            Args:
+                *args: Input numeric arguments.
+
+            Returns:
+                Computed scalar value.
+            """
             x = _scalar_from_numeric(args[0])
             y = _scalar_from_numeric(args[1])
             return x * x + 3.0 * y
 
         def grad(self, *args: Numeric) -> Sequence[Numeric]:
-            """Return exact gradient (2*x, 3.0)."""
+            """Return exact gradient (2*x, 3.0).
+
+            Args:
+                *args: Input numeric arguments.
+
+            Returns:
+                Sequence of analytical gradients.
+            """
             x = _scalar_from_numeric(args[0])
             return [2.0 * x, 3.0]
 
@@ -289,12 +395,26 @@ def test_assert_numerical_grads() -> None:
         """Callable with an incorrect single-arg analytical .grad() method."""
 
         def __call__(self, *args: Numeric) -> Numeric:
-            """Compute x^2."""
+            """Compute x^2.
+
+            Args:
+                *args: Input numeric arguments.
+
+            Returns:
+                Computed scalar value.
+            """
             x = _scalar_from_numeric(args[0])
             return x * x
 
         def grad(self, *args: Numeric) -> Numeric:
-            """Return wrong gradient 100.0 instead of 2*x."""
+            """Return wrong gradient 100.0 instead of 2*x.
+
+            Args:
+                *args: Input numeric arguments.
+
+            Returns:
+                Incorrect scalar gradient.
+            """
             _ = args
             return 100.0
 
@@ -302,11 +422,25 @@ def test_assert_numerical_grads() -> None:
         """Callable whose analytical .grad() returns NaN."""
 
         def __call__(self, *args: Numeric) -> Numeric:
-            """Compute x."""
+            """Compute x.
+
+            Args:
+                *args: Input numeric arguments.
+
+            Returns:
+                Computed scalar value.
+            """
             return _scalar_from_numeric(args[0])
 
         def grad(self, *args: Numeric) -> Numeric:
-            """Return NaN gradient."""
+            """Return NaN gradient.
+
+            Args:
+                *args: Input numeric arguments.
+
+            Returns:
+                NaN scalar gradient.
+            """
             _ = args
             return float("nan")
 
@@ -320,7 +454,14 @@ def test_assert_numerical_grads() -> None:
         assert_numerical_grads(lambda _x: float("nan"), [1.0])
 
     def _nan_on_perturbed(x: Numeric) -> Numeric:
-        """Return 0.0 at x == 1.0 and NaN otherwise."""
+        """Return 0.0 at x == 1.0 and NaN otherwise.
+
+        Args:
+            x: Input numeric value.
+
+        Returns:
+            0.0 at base point or NaN when perturbed.
+        """
         v = _scalar_from_numeric(x)
         return 0.0 if v == 1.0 else float("nan")
 
@@ -328,10 +469,10 @@ def test_assert_numerical_grads() -> None:
         assert_numerical_grads(_nan_on_perturbed, [1.0])
 
     with pytest.raises(ValueError, match="order must be at least 1"):
-        assert_numerical_grads(poly_fn, [2.0, 3.0], order=0)
+        assert_numerical_grads(algebraic_poly, [2.0, 3.0], order=0)
 
     with pytest.raises(AssertionError, match="Tolerance atol must be non-negative"):
-        assert_numerical_grads(poly_fn, [2.0, 3.0], atol=-1.0)
+        assert_numerical_grads(algebraic_poly, [2.0, 3.0], atol=-1.0)
 
 
 def test_fake_contexts_and_backend_restrictions() -> None:
@@ -359,17 +500,47 @@ def test_fake_contexts_and_backend_restrictions() -> None:
 
     with fake_jit() as j_ctx:
         assert j_ctx.active is True
-        # While fake_jit is active, JIT tracing is bypassed so max_traces does not trip
         assert traced_fn(1) == 2
         assert traced_fn(2) == 3
     assert j_ctx.active is False
 
+    class PmapSampleTest(TestCase):
+        """TestCase verifying fake_pmap and fake_pmap_and_jit with @variants."""
+
+        @variants(with_pmap=True, with_jit=True)
+        def run_step(self, val: int) -> int:
+            """Execute step under active variant.
+
+            Args:
+                val: Input integer.
+
+            Returns:
+                val * 2.
+            """
+
+            def _double(v: int) -> int:
+                """Double v.
+
+                Args:
+                    v: Input integer.
+
+                Returns:
+                    v * 2.
+                """
+                return v * 2
+
+            fn = self.variant(_double)
+            return fn(val)
+
+    pmap_test = PmapSampleTest()
     with fake_pmap() as p_ctx:
         assert p_ctx.active is True
+        assert pmap_test.run_step(4) == 8
     assert p_ctx.active is False
 
     with fake_pmap_and_jit() as pj_ctx:
         assert pj_ctx.active is True
+        assert pmap_test.run_step(5) == 10
     assert pj_ctx.active is False
 
     def _id(x: int) -> int:
@@ -407,20 +578,10 @@ def test_dataclasses_and_pytree_registration() -> None:
 
     @dataclass
     class Point(MappableDataclassMixin):
-        """2D point dataclass."""
+        """2D point dataclass using generated __init__."""
 
-        x: int
-        y: int
-
-        def __init__(self, x: int = 0, y: int = 0) -> None:
-            """Initialize Point.
-
-            Args:
-                x: X coordinate.
-                y: Y coordinate.
-            """
-            self.x = x
-            self.y = y
+        x: int = 0
+        y: int = 0
 
     p = Point(1, 2)
     assert isinstance(p, collections.abc.Mapping)
@@ -444,68 +605,67 @@ def test_dataclasses_and_pytree_registration() -> None:
     assert leaves == [1, 2]
     assert tree_unflatten(treedef, [30, 40]) == Point(30, 40)
 
+    # Verify nested dataclasses containing ZeroArray and list/dict fields are NOT corrupted by astuple
+    @dataclass
+    class ContainerPoint(MappableDataclassMixin):
+        """Dataclass holding a ZeroArray and a list."""
+
+        arr: ZeroArray
+        seq: list[int]
+
+    arr_leaf = ZeroArray([1.0, 2.0], shape=(2,), dtype=DType.float32)
+    nested_p = ContainerPoint(arr_leaf, [10, 20])
+    assert isinstance(nested_p["arr"], ZeroArray)
+    assert isinstance(nested_p["seq"], list)
+    nested_leaves, _ = tree_flatten(nested_p)
+    assert len(nested_leaves) == 3
+    assert isinstance(nested_leaves[0], ZeroArray)
+
     # Test kw_only=True with mappable_dataclass=True and mappable_dataclass=False
     @dataclass(kw_only=True)
     class KwPoint:
         """Keyword-only mappable dataclass."""
 
-        x: int
-        y: int
-
-        def __init__(self, x: int = 0, y: int = 0) -> None:
-            """Initialize KwPoint.
-
-            Args:
-                x: First coordinate.
-                y: Second coordinate.
-            """
-            self.x = x
-            self.y = y
+        x: int = 0
+        y: int = 0
 
     kp = KwPoint(x=3, y=4)
     assert kp.x == 3 and kp.y == 4
+    pos_pair: Sequence[int] = [3, 4]
     with pytest.raises(TypeError, match="takes 1 positional argument"):
-        KwPoint(3, 4)
+        KwPoint(*pos_pair)
+
+    @dataclass(kw_only=True)
+    class KwPreMappablePoint(MappableDataclassMixin):
+        """Keyword-only dataclass already inheriting MappableDataclassMixin."""
+
+        x: int = 0
+        y: int = 0
+
+    kpm = KwPreMappablePoint(x=5, y=6)
+    assert kpm.x == 5 and kpm.y == 6
+    with pytest.raises(TypeError, match="takes 1 positional argument"):
+        KwPreMappablePoint(*pos_pair)
 
     @dataclass(kw_only=True, mappable_dataclass=False)
     class KwNonMappablePoint:
         """Keyword-only non-mappable dataclass."""
 
-        x: int
-        y: int
-
-        def __init__(self, x: int = 0, y: int = 0) -> None:
-            """Initialize KwNonMappablePoint.
-
-            Args:
-                x: First coordinate.
-                y: Second coordinate.
-            """
-            self.x = x
-            self.y = y
+        x: int = 0
+        y: int = 0
 
     knp = KwNonMappablePoint(x=7, y=8)
     assert knp.x == 7 and knp.y == 8
     with pytest.raises(TypeError, match="takes 1 positional argument"):
-        KwNonMappablePoint(7, 8)
+        KwNonMappablePoint(*pos_pair)
 
     # Test unflatten when custom_cls is not in _CUSTOM_PYTREE_NODES
     @dataclass(mappable_dataclass=True, registered_with_pytree=False)
     class UnregisteredPoint(MappableDataclassMixin):
         """Mappable dataclass not registered in _CUSTOM_PYTREE_NODES."""
 
-        a: int
-        b: int
-
-        def __init__(self, a: int = 0, b: int = 0) -> None:
-            """Initialize UnregisteredPoint.
-
-            Args:
-                a: First coordinate.
-                b: Second coordinate.
-            """
-            self.a = a
-            self.b = b
+        a: int = 0
+        b: int = 0
 
     up = UnregisteredPoint(5, 6)
     up_leaves, up_def = tree_flatten(up)
@@ -513,29 +673,30 @@ def test_dataclasses_and_pytree_registration() -> None:
     assert tree_unflatten(up_def, [7, 8]) == UnregisteredPoint(7, 8)
 
     fallback_def = PyTreeDef(node_type="unknown", children=(PyTreeDef(),))
-    assert tree_unflatten(fallback_def, [99]) == (99,)
+    with pytest.raises(ValueError, match="Unknown PyTreeDef node_type"):
+        tree_unflatten(fallback_def, [99])
 
     @dataclass(mappable_dataclass=False, registered_with_pytree=True)
     class NonMappablePoint:
         """Dataclass with mappable_dataclass=False."""
 
-        x: int
-        y: int
-
-        def __init__(self, x: int = 0, y: int = 0) -> None:
-            """Initialize NonMappablePoint.
-
-            Args:
-                x: First coordinate.
-                y: Second coordinate.
-            """
-            self.x = x
-            self.y = y
+        x: int = 0
+        y: int = 0
 
     nmp = NonMappablePoint(3, 4)
     assert nmp.x == 3 and nmp.y == 4
     mappable_dataclass(NonMappablePoint)
     register_dataclass_type_with_jax_tree_util(NonMappablePoint)
+
+    @dataclass(mappable_dataclass=False, registered_with_pytree=False)
+    class RawDataclassPoint:
+        """Dataclass with both mappable_dataclass=False and registered_with_pytree=False."""
+
+        x: int = 1
+        y: int = 2
+
+    raw_pt = RawDataclassPoint(9, 10)
+    assert raw_pt.x == 9 and raw_pt.y == 10
 
     class PlainBox:
         """Plain class converted by mappable_dataclass and register_dataclass_type_with_jax_tree_util."""
@@ -551,7 +712,7 @@ def test_dataclasses_and_pytree_registration() -> None:
     reg_box = register_dataclass_type_with_jax_tree_util(PlainBox)
     mappable_dataclass(reg_box)
     assert issubclass(reg_box, MappableDataclassProtocol)
-    cls_entry = _CUSTOM_PYTREE_NODES[id(reg_box)]
+    cls_entry = _CUSTOM_PYTREE_NODES[reg_box]
     _, unflatten_fn = cls_entry
     rebuilt_box = unflatten_fn((), (42,))
     assert isinstance(rebuilt_box, MappableDataclassProtocol)
@@ -562,7 +723,11 @@ def test_dataclasses_and_pytree_registration() -> None:
         """Non-dataclass class inheriting directly from MappableDataclassMixin."""
 
         def __init__(self, **kwargs: PyTree) -> None:
-            """Initialize bare mixin user."""
+            """Initialize bare mixin user.
+
+            Args:
+                **kwargs: Ignored keyword arguments.
+            """
             _ = kwargs
 
     bare = _BareMixinUser()
@@ -611,7 +776,7 @@ def test_utils_params_product_and_deprecations() -> None:
 
     assert if_args_not_none(_add_opt, 2, 3) == 5
     assert if_args_not_none(_add_opt, None, 3) is None
-    assert get_err_regex("some_error") == "some_error"
+    assert get_err_regex("shape (2, 3)") == r"shape\ \(2,\ 3\)"
 
     def _plus1(x: int) -> int:
         """Add 1 to x.
@@ -661,17 +826,18 @@ def test_utils_params_product_and_deprecations() -> None:
         assert len(caught2) == 2
 
     @warn_only_n_pos_args_in_future(n=1)
-    def pos_fn(a: int, b: int = 2) -> int:
-        """Accept up to 2 args, warn if > 1 positional.
+    def pos_fn(a: int, b: int = 2, *, c: int = 3) -> int:
+        """Accept up to 2 positional args and 1 keyword-only arg, warn if > 1 positional.
 
         Args:
             a: First integer.
             b: Second integer.
+            c: Keyword-only integer.
 
         Returns:
-            Sum of a and b.
+            Sum of a, b, and c.
         """
-        return a + b
+        return a + b + c
 
     @warn_only_n_pos_args_in_future
     def pos_fn_bare(a: int, b: int = 2) -> int:
@@ -712,8 +878,8 @@ def test_utils_params_product_and_deprecations() -> None:
 
     with warnings.catch_warnings(record=True) as caught3:
         warnings.simplefilter("always")
-        assert pos_fn(1, b=2) == 3
-        assert pos_fn(1, 2) == 3
+        assert pos_fn(1, b=2) == 6
+        assert pos_fn(1, 2) == 6
         assert pos_fn_bare(1, 2) == 3
         assert kw_fn(a=5) == 5
         assert kw_fn(5) == 5
@@ -721,5 +887,5 @@ def test_utils_params_product_and_deprecations() -> None:
         assert len(caught3) == 4
 
     extra_args: tuple[int, ...] = (2, 3)
-    with pytest.raises(TypeError, match="takes at most"):
+    with pytest.raises(TypeError, match="takes at most 2 arguments"):
         pos_fn(1, *extra_args)

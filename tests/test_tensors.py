@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 import pytest
-from ml_switcheroo_ir import DType
+import zero_jax.numpy as jnp
+from ml_switcheroo_compiler.core.dtype import DType as CompilerDType
+from ml_switcheroo_compiler.core.tensor import Tensor as CompilerTensor
+from ml_switcheroo_compiler.core.tensor import TensorConfig
+from ml_switcheroo_ir import DType, TensorShape, TensorSpec
+from zero_flax.nnx.variables import Param
+from zero_grain import SharedMemoryArray
 
 from zero_chex import (
     assert_axis_dimension,
@@ -17,6 +23,7 @@ from zero_chex import (
     assert_equal_shape_prefix,
     assert_equal_shape_suffix,
     assert_equal_size,
+    assert_is_broadcastable,
     assert_rank,
     assert_shape,
     assert_size,
@@ -43,28 +50,72 @@ class _CustomDTypeName:
         return self._name
 
 
+class _CustomTensorShapeHolder:
+    """Helper class exposing a TensorShape on .shape."""
+
+    def __init__(self, dims: tuple[int, ...]) -> None:
+        """Initialize with dims tuple.
+
+        Args:
+            dims: Dimension sizes.
+        """
+        self._shape = TensorShape(dims)
+
+    @property
+    def shape(self) -> TensorShape:
+        """Return TensorShape."""
+        return self._shape
+
+
+class _CustomTupleShapeHolder:
+    """Helper class exposing a plain tuple on .shape."""
+
+    def __init__(self, dims: tuple[int, ...]) -> None:
+        """Initialize with dims tuple.
+
+        Args:
+            dims: Dimension sizes.
+        """
+        self._shape = dims
+
+    @property
+    def shape(self) -> tuple[int, ...]:
+        """Return shape tuple."""
+        return self._shape
+
+
 def test_internal_tensor_helpers() -> None:
     """Test _get_shape, _normalize_dtype, _get_type, and _dim_matches edge cases."""
     assert _get_shape([]) == (0,)
     assert _get_shape([[1, 2], [3, 4]]) == (2, 2)
     assert _get_shape(42) == ()
-    with pytest.raises(ValueError, match="Ragged sequence"):
+    assert _get_shape(TensorSpec(shape=(3, 4), dtype=DType.float32)) == (3, 4)
+    assert _get_shape(_CustomTensorShapeHolder((5, 6))) == (5, 6)
+    assert _get_shape(_CustomTupleShapeHolder((7, 8))) == (7, 8)
+    with pytest.raises(AssertionError, match="Ragged sequence"):
         _get_shape([[1, 2], [3]])
 
     assert _normalize_dtype(DType.float32) == "float32"
     assert _normalize_dtype(_CustomDTypeName("Float64")) == "float64"
+    assert _normalize_dtype(_CustomDTypeName("DType.bool_")) == "bool"
+    with pytest.raises(ValueError, match="Unrecognized dtype name"):
+        _normalize_dtype(_CustomDTypeName("not_a_real_dtype"))
     assert _normalize_dtype(bool) == "bool"
     assert _normalize_dtype(int) == "int"
     assert _normalize_dtype(float) == "float"
     assert _normalize_dtype(complex) == "complex"
     assert _normalize_dtype(str) == "str"
     assert _normalize_dtype("DType.int32") == "int32"
+    assert _normalize_dtype("bool_") == "bool"
 
     assert _get_type("hello") == "str"
+    assert _get_type(TensorSpec(shape=(2,), dtype=DType.int64)) == DType.int64
     assert _dtypes_match("float32", float)
+    assert _dtypes_match(float, "float32")
     assert not _dtypes_match("int32", float)
     assert not _dtypes_match("float32", "float64")
     assert not _dim_matches(3, ...)
+    assert _dim_matches(3, "B", None)
 
 
 def test_assert_axis_dimensions() -> None:
@@ -158,7 +209,7 @@ def test_assert_equal_rank_shape_prefix_suffix_size() -> None:
 
 
 def test_assert_rank_shape_size_type() -> None:
-    """Test pattern-matching assertions for rank, shape, size, and type."""
+    """Test pattern-matching assertions for rank, shape, size, and type including PyTree inputs."""
     x = ZeroArray.zeros((2, 3), dtype=DType.float32)
     y = ZeroArray.zeros((4, 5, 6), dtype=DType.int32)
     s = ZeroArray(1.0)
@@ -169,6 +220,8 @@ def test_assert_rank_shape_size_type() -> None:
     assert_rank([x, y], [2, 3])
     assert_rank([x, y], {2, 3})
     assert_rank([x, ZeroArray.ones((4, 5))], 2)
+    assert_rank({"a": x, "b": y}, [2, 3])
+    assert_rank({"a": x, "b": ZeroArray.ones((4, 5))}, 2)
     assert_rank([1, 2], [0, 0])
 
     with pytest.raises(AssertionError, match="Expected rank"):
@@ -190,14 +243,25 @@ def test_assert_rank_shape_size_type() -> None:
     assert_shape(x, (2, None))
     assert_shape(x, (2, {3, 4}))
     assert_shape(x, (2, (3, 4)))
+    assert_shape(x, ("B", "N"))
+    assert_shape([x, ZeroArray.ones((2, 5))], [("B", 3), ("B", 5)])
+    with pytest.raises(AssertionError, match="does not match expected pattern"):
+        assert_shape([x, ZeroArray.ones((4, 5))], [("B", 3), ("B", 5)])
     assert_shape(y, (4, ...))
     assert_shape(y, (..., 6))
     assert_shape(y, (4, ..., 6))
     assert_shape([x, ZeroArray.ones((2, 3))], (2, 3))
     assert_shape([x, y], [(2, 3), (4, 5, 6)])
+    assert_shape({"a": x, "b": y}, [(2, 3), (4, 5, 6)])
 
     with pytest.raises(ValueError, match="multiple Ellipsis"):
         assert_shape(y, (..., 5, ...))
+    with pytest.raises(ValueError, match="Invalid shape dimension matcher"):
+        assert_shape(x, (True, 3))
+    with pytest.raises(ValueError, match="Invalid boolean in shape dimension matcher set"):
+        assert_shape(x, ({True, 2}, 3))
+    with pytest.raises(ValueError, match="Invalid shape dimension matcher tuple"):
+        assert_shape(x, ((True, 2), 3))
     with pytest.raises(AssertionError, match="shorter than pattern"):
         assert_shape(x, (2, 3, ..., 4))
     with pytest.raises(AssertionError, match="prefix does not match"):
@@ -222,6 +286,7 @@ def test_assert_rank_shape_size_type() -> None:
     assert_size([x, y], [6, 120])
     assert_size([x, y], [(6, 12), (100, 120)])
     assert_size([x, ZeroArray.ones((6,))], 6)
+    assert_size({"a": x, "b": y}, [6, 120])
 
     with pytest.raises(AssertionError, match="Expected size"):
         assert_size(x, 10)
@@ -237,10 +302,15 @@ def test_assert_rank_shape_size_type() -> None:
         assert_size([x, y], 6)
 
     assert_type(1, int)
+    assert_type(1.0, DType.float32)
+    assert_type(True, DType.bool)
+    assert_type(1, DType.int32)
     assert_type(1, [int, float])
     assert_type(x, DType.float32)
+    assert_type(x, float)
     assert_type(x, (DType.float32, DType.float64))
     assert_type([x, y], [DType.float32, DType.int32])
+    assert_type({"a": x, "b": y}, [DType.float32, DType.int32])
     assert_type([x, ZeroArray.ones((2,), dtype=DType.float32)], DType.float32)
 
     with pytest.raises(AssertionError, match="Expected type"):
@@ -253,3 +323,40 @@ def test_assert_rank_shape_size_type() -> None:
         assert_type([x, y], [DType.float32, DType.float32])
     with pytest.raises(AssertionError, match="does not match expected"):
         assert_type([x, y], DType.float32)
+
+
+def test_cross_ecosystem_tensor_assertions() -> None:
+    """Test tensor assertions on zero_jax, ml_switcheroo_compiler, zero_flax, and zero_grain objects."""
+    j_arr = jnp.zeros((2, 3, 4), dtype="float32")
+    c_ten = CompilerTensor(
+        [[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0]],
+        TensorConfig(shape=(2, 4), dtype=CompilerDType.float32),
+    )
+    p_var = Param(j_arr)
+
+    assert_shape(j_arr, (2, 3, 4))
+    assert_shape(c_ten, (2, 4))
+    assert_shape(p_var, (2, 3, 4))
+
+    assert_rank(j_arr, 3)
+    assert_rank(c_ten, 2)
+    assert_rank(p_var, 3)
+
+    assert_type(j_arr, DType.float32)
+    assert_type(c_ten, CompilerDType.float32)
+    assert_type(c_ten, [CompilerDType.int32, CompilerDType.float32])
+    assert_type(p_var, DType.float32)
+
+    assert_axis_dimension(j_arr, 0, 2)
+    assert_axis_dimension(c_ten, 1, 4)
+    assert_axis_dimension(p_var, 2, 4)
+
+    assert_is_broadcastable(j_arr.shape, (1, 3, 4))
+    assert_is_broadcastable(c_ten.shape, (2, 1))
+
+    shm_arr = SharedMemoryArray((2, 3), "float32")
+    try:
+        assert_shape(shm_arr, (2, 3))
+        assert_type(shm_arr, DType.float32)
+    finally:
+        shm_arr.unlink_on_del()

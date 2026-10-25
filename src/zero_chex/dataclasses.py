@@ -8,10 +8,13 @@ import functools
 from collections.abc import Callable, Iterator
 from typing import ClassVar, Protocol, TypeVar, overload, runtime_checkable
 
+from typing_extensions import dataclass_transform
+
 from zero_chex._src.tree_util import register_custom_pytree_node
 from zero_chex.types import MappableDataclassProtocol, PyTree
 
 T = TypeVar("T")
+T_contra = TypeVar("T_contra", contravariant=True)
 
 
 @runtime_checkable
@@ -19,6 +22,20 @@ class DataclassInstanceProtocol(Protocol):
     """Protocol representing a standard Python dataclass instance."""
 
     __dataclass_fields__: ClassVar[dict[str, dataclasses.Field[PyTree]]]
+
+
+class _KwOnlyInitProtocol(Protocol[T_contra]):
+    """Protocol for a keyword-only __init__ function in a dataclass namespace."""
+
+    def __call__(self, self_inst: T_contra, *args: PyTree, **kwargs: PyTree) -> None:
+        """Initialize dataclass instance enforcing keyword-only arguments.
+
+        Args:
+            self_inst: Instance being initialized.
+            *args: Disallowed positional arguments.
+            **kwargs: Keyword field values.
+        """
+        ...
 
 
 def _get_field_names(instance: MappableDataclassProtocol | DataclassInstanceProtocol) -> tuple[str, ...]:
@@ -35,6 +52,24 @@ def _get_field_names(instance: MappableDataclassProtocol | DataclassInstanceProt
     return instance.__chex_mappable_fields__()
 
 
+def _get_shallow_dataclass_values(instance: DataclassInstanceProtocol) -> tuple[PyTree, ...]:
+    """Extract declared dataclass field values shallowly without deep-copying or converting containers.
+
+    Args:
+        instance: Dataclass instance to inspect.
+
+    Returns:
+        Ordered tuple of field values corresponding to declared dataclass fields.
+    """
+    inst_dict = vars(instance)
+    values: list[PyTree] = []
+    for f in dataclasses.fields(instance):
+        if f.name in inst_dict:
+            val: PyTree = inst_dict[f.name]
+            values.append(val)
+    return tuple(values)
+
+
 def _get_field_values(instance: MappableDataclassProtocol | DataclassInstanceProtocol) -> tuple[PyTree, ...]:
     """Return the current field values for a dataclass instance in declaration order.
 
@@ -45,9 +80,7 @@ def _get_field_values(instance: MappableDataclassProtocol | DataclassInstancePro
         Tuple of field values.
     """
     if isinstance(instance, DataclassInstanceProtocol):
-        names = _get_field_names(instance)
-        raw_tuple = dataclasses.astuple(instance)
-        return tuple(raw_tuple[: len(names)])
+        return _get_shallow_dataclass_values(instance)
     return instance.__chex_field_values__()
 
 
@@ -83,9 +116,7 @@ class MappableDataclassMixin(collections.abc.Mapping[str, PyTree]):
             Tuple of field values.
         """
         if isinstance(self, DataclassInstanceProtocol):
-            names = self.__chex_mappable_fields__()
-            raw_tuple = dataclasses.astuple(self)
-            return tuple(raw_tuple[: len(names)])
+            return _get_shallow_dataclass_values(self)
         return ()
 
     def __getitem__(self, key: str) -> PyTree:
@@ -146,12 +177,48 @@ class MappableDataclassMixin(collections.abc.Mapping[str, PyTree]):
         return cls_type(**field_map)
 
 
+def _make_kw_only_dataclass(cls: type[T]) -> type[T]:
+    """Create a keyword-only subclass of a dataclass without mutating cls.__init__ in-place.
+
+    Args:
+        cls: Dataclass type whose __init__ should require keyword-only arguments.
+
+    Returns:
+        Subclass of cls whose __init__ rejects positional arguments.
+    """
+    orig_init = cls.__init__
+
+    def _kw_only_init(self_inst: T, *args: PyTree, **kwargs: PyTree) -> None:
+        """Initialize dataclass instance enforcing keyword-only arguments.
+
+        Args:
+            self_inst: Instance being initialized.
+            *args: Disallowed positional arguments.
+            **kwargs: Keyword field values.
+
+        Raises:
+            TypeError: If any positional arguments are provided.
+        """
+        if args:
+            raise TypeError(f"{cls.__name__}.__init__() takes 1 positional argument but {len(args) + 1} were given")
+        orig_init(self_inst, **kwargs)
+
+    namespace = {
+        "__module__": cls.__module__,
+        "__qualname__": cls.__qualname__,
+        "__doc__": cls.__doc__,
+        "__init__": _kw_only_init,
+    }
+    derived: type[T] = type(cls.__name__, (cls,), namespace)
+    return derived
+
+
 def _apply_mappable_dataclass(
     cls: type[T],
     kw_only: bool = False,
     register_pytree: bool = False,
 ) -> type[T]:
-    """Create or return a dataclass subclass inheriting from MappableDataclassMixin.
+    """Augment a dataclass with MappableDataclassMixin methods and optional PyTree registration.
 
     Args:
         cls: The dataclass type to augment.
@@ -163,18 +230,21 @@ def _apply_mappable_dataclass(
     """
     if not dataclasses.is_dataclass(cls):
         cls = dataclasses.dataclass(cls)
-    if issubclass(cls, MappableDataclassMixin) and not kw_only:
+    if issubclass(cls, MappableDataclassMixin):
+        if kw_only:
+            cls = _make_kw_only_dataclass(cls)
         if register_pytree:
             _register_mappable_cls(cls)
         return cls
 
+    collections.abc.Mapping.register(cls)
     orig_init = cls.__init__
 
-    def _kw_only_init(self: T, *args: PyTree, **kwargs: PyTree) -> None:
+    def _kw_only_init(self_inst: T, *args: PyTree, **kwargs: PyTree) -> None:
         """Initialize dataclass instance enforcing keyword-only arguments.
 
         Args:
-            self: Instance being initialized.
+            self_inst: Instance being initialized.
             *args: Disallowed positional arguments.
             **kwargs: Keyword field values.
 
@@ -183,29 +253,16 @@ def _apply_mappable_dataclass(
         """
         if args:
             raise TypeError(f"{cls.__name__}.__init__() takes 1 positional argument but {len(args) + 1} were given")
-        orig_init(self, **kwargs)
+        orig_init(self_inst, **kwargs)
 
-    collections.abc.Mapping.register(cls)
-    namespace = {
+    namespace: dict[str, str | _KwOnlyInitProtocol[T] | None] = {
         "__module__": cls.__module__,
         "__qualname__": cls.__qualname__,
         "__doc__": cls.__doc__,
-        "__init__": _kw_only_init if kw_only else orig_init,
-        "__chex_mappable_fields__": MappableDataclassMixin.__chex_mappable_fields__,
-        "__chex_field_values__": MappableDataclassMixin.__chex_field_values__,
-        "__getitem__": MappableDataclassMixin.__getitem__,
-        "__iter__": MappableDataclassMixin.__iter__,
-        "__len__": MappableDataclassMixin.__len__,
-        "keys": collections.abc.Mapping.keys,
-        "values": collections.abc.Mapping.values,
-        "items": collections.abc.Mapping.items,
-        "get": collections.abc.Mapping.get,
-        "replace": MappableDataclassMixin.replace,
     }
-
-    bases: tuple[type[T] | type[MappableDataclassMixin], ...] = (
-        (cls,) if issubclass(cls, MappableDataclassMixin) else (cls, MappableDataclassMixin)
-    )
+    if kw_only:
+        namespace["__init__"] = _kw_only_init
+    bases: tuple[type[T] | type[MappableDataclassMixin], ...] = (cls, MappableDataclassMixin)
     derived: type[T] = type(cls.__name__, bases, namespace)
     if register_pytree:
         _register_mappable_cls(derived)
@@ -267,6 +324,7 @@ def _register_mappable_cls(mappable_cls: type[T]) -> None:
             return inst
         return children
 
+    assert issubclass(mappable_cls, MappableDataclassProtocol)
     register_custom_pytree_node(mappable_cls, _flatten, _unflatten)
 
 
@@ -312,6 +370,7 @@ def dataclass(
 ) -> Callable[[type[T]], type[T]]: ...
 
 
+@dataclass_transform()
 def dataclass(
     cls: type[T] | None = None,
     init: bool = True,
@@ -361,39 +420,15 @@ def dataclass(
             frozen=frozen,
         )(target_cls)
         if use_mappable:
-            dc_cls = _apply_mappable_dataclass(dc_cls, kw_only=kw_only)
-        elif kw_only:
-            orig_init = dc_cls.__init__
-
-            def _kw_init(self: T, *args: PyTree, **kwargs: PyTree) -> None:
-                """Initialize dataclass enforcing keyword-only arguments.
-
-                Args:
-                    self: Instance being initialized.
-                    *args: Disallowed positional arguments.
-                    **kwargs: Keyword field values.
-
-                Raises:
-                    TypeError: If any positional arguments are passed.
-                """
-                if args:
-                    raise TypeError(
-                        f"{dc_cls.__name__}.__init__() takes 1 positional argument but {len(args) + 1} were given"
-                    )
-                orig_init(self, **kwargs)
-
-            dc_cls = type(
-                dc_cls.__name__,
-                (dc_cls,),
-                {
-                    "__module__": dc_cls.__module__,
-                    "__qualname__": dc_cls.__qualname__,
-                    "__doc__": dc_cls.__doc__,
-                    "__init__": _kw_init,
-                },
+            return _apply_mappable_dataclass(
+                dc_cls,
+                kw_only=kw_only,
+                register_pytree=registered_with_pytree,
             )
+        if kw_only:
+            dc_cls = _make_kw_only_dataclass(dc_cls)
         if registered_with_pytree:
-            register_dataclass_type_with_jax_tree_util(dc_cls)
+            return register_dataclass_type_with_jax_tree_util(dc_cls)
         return dc_cls
 
     if cls is None:

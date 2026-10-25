@@ -3,30 +3,33 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Union
 
-from ml_switcheroo_ir import DType, ShapeMismatchError, broadcast_shapes
+from ml_switcheroo_ir import DType, ShapeMismatchError, TensorShape, TensorSpec, broadcast_shapes
 from typing_extensions import TypeGuard
 
-from zero_chex.devices import (
-    _num_devices_available,
-    assert_devices_available,
-    assert_gpu_available,
-    assert_tpu_available,
-)
+from zero_chex._src.tree_util import tree_leaves
 from zero_chex.mocks import are_asserts_enabled
 from zero_chex.types import (
+    _VALID_DTYPE_NAMES,
     ArrayDType,
     ArrayProtocol,
     ArrayTree,
+    CompilerDType,
     DTypeAttrProtocol,
     DTypeLikeProtocol,
     EllipsisType,
+    MappableDataclassProtocol,
+    NamedTuplePyTreeProtocol,
     PyTree,
     ShapeOnlyProtocol,
+    SharedMemoryArray,
+    StateMappingProtocol,
     TDimMatcher,
     TShapeMatcher,
+    VariableLeafProtocol,
+    _has_valid_shape_tuple,
 )
 
 
@@ -40,17 +43,28 @@ def _get_shape(x: PyTree) -> tuple[int, ...]:
         A tuple of dimension integers representing the shape of x.
 
     Raises:
-        ValueError: If x is a ragged nested sequence with inconsistent sub-shapes.
+        AssertionError: If x is a ragged nested sequence with inconsistent sub-shapes.
     """
-    if isinstance(x, (ArrayProtocol, ShapeOnlyProtocol)):
+    if isinstance(x, VariableLeafProtocol):
+        return _get_shape(x.value)
+    if isinstance(x, SharedMemoryArray):
+        return tuple(x.metadata.shape)
+    if isinstance(x, TensorSpec):
+        return x.static_shape
+    if isinstance(x, ArrayProtocol):
         return tuple(x.shape)
-    if isinstance(x, (list, tuple)):
+    if isinstance(x, ShapeOnlyProtocol) and _has_valid_shape_tuple(x):
+        raw_s = x.shape
+        if isinstance(raw_s, TensorShape):
+            return raw_s.static_shape
+        return tuple(int(d) for d in raw_s)
+    if isinstance(x, (list, tuple)) and not isinstance(x, NamedTuplePyTreeProtocol):
         if not x:
             return (0,)
         first_sub = _get_shape(x[0])
         for elem in x[1:]:
             if _get_shape(elem) != first_sub:
-                raise ValueError(f"Ragged sequence has inconsistent sub-shapes: {[_get_shape(e) for e in x]}")
+                raise AssertionError(f"Ragged sequence has inconsistent sub-shapes: {[_get_shape(e) for e in x]}")
         return (len(x),) + first_sub
     return ()
 
@@ -87,11 +101,19 @@ def _normalize_dtype(dt: ArrayDType) -> str:
 
     Returns:
         Canonical lowercase dtype category or name string.
+
+    Raises:
+        ValueError: If dt is a DTypeLikeProtocol whose name is not a valid dtype name.
     """
-    if isinstance(dt, DType):
-        return dt.value.lower()
+    if isinstance(dt, (DType, CompilerDType)):
+        return str(dt.value).lower()
     if isinstance(dt, DTypeLikeProtocol):
-        return dt.name.lower()
+        cand = dt.name.lower()
+        if cand.startswith("dtype."):
+            cand = cand.split(".", 1)[1]
+        if cand not in _VALID_DTYPE_NAMES:
+            raise ValueError(f"Unrecognized dtype name: {dt.name!r}")
+        return "bool" if cand == "bool_" else cand
     if isinstance(dt, type):
         if dt is bool:
             return "bool"
@@ -105,7 +127,7 @@ def _normalize_dtype(dt: ArrayDType) -> str:
     raw = str(dt).lower()
     if raw.startswith("dtype."):
         raw = raw.split(".", 1)[1]
-    return raw
+    return "bool" if raw == "bool_" else raw
 
 
 def _get_type(x: PyTree) -> ArrayDType:
@@ -117,6 +139,12 @@ def _get_type(x: PyTree) -> ArrayDType:
     Returns:
         The dtype attribute of x if present, or its Python type.
     """
+    if isinstance(x, VariableLeafProtocol):
+        return _get_type(x.value)
+    if isinstance(x, SharedMemoryArray):
+        return str(x.metadata.dtype) if x.metadata.dtype is not None else "float32"
+    if isinstance(x, TensorSpec):
+        return x.dtype
     if isinstance(x, (ArrayProtocol, DTypeAttrProtocol)):
         return x.dtype
     if isinstance(x, (int, float, complex, bool)):
@@ -132,7 +160,7 @@ def _dtypes_match(actual: ArrayDType, expected: ArrayDType) -> bool:
         expected: The expected dtype specification.
 
     Returns:
-        True if actual matches expected.
+        True if actual matches expected under Chex dtype promotion/category rules.
     """
     norm_a = _normalize_dtype(actual)
     norm_e = _normalize_dtype(expected)
@@ -140,6 +168,39 @@ def _dtypes_match(actual: ArrayDType, expected: ArrayDType) -> bool:
         return True
     if norm_e in ("int", "float", "complex", "bool") and norm_a.startswith(norm_e):
         return True
+    if norm_a in ("int", "float", "complex", "bool") and norm_e.startswith(norm_a):
+        return True
+    return False
+
+
+def _is_pytree_container(inputs: ArrayTree) -> bool:
+    """Determine whether inputs is a PyTree container of multiple array/scalar leaves.
+
+    Args:
+        inputs: Input argument passed to assert_rank, assert_shape, assert_size, or assert_type.
+
+    Returns:
+        True if inputs is a Mapping, custom PyTree container protocol, or list/tuple of arrays.
+    """
+    if isinstance(inputs, (Mapping, MappableDataclassProtocol, NamedTuplePyTreeProtocol, StateMappingProtocol)):
+        return True
+    if isinstance(inputs, (list, tuple)) and len(inputs) > 0:
+        return all(
+            isinstance(
+                item,
+                (
+                    ArrayProtocol,
+                    VariableLeafProtocol,
+                    ShapeOnlyProtocol,
+                    TensorSpec,
+                    Mapping,
+                    MappableDataclassProtocol,
+                    NamedTuplePyTreeProtocol,
+                    StateMappingProtocol,
+                ),
+            )
+            for item in inputs
+        )
     return False
 
 
@@ -515,10 +576,10 @@ def assert_rank(
     inputs: ArrayTree,
     expected_ranks: int | set[int] | Sequence[int | set[int] | Sequence[int]],
 ) -> None:
-    """Assert that input array(s) have rank matching expected_ranks.
+    """Assert that input array(s) or PyTree leaves have rank matching expected_ranks.
 
     Args:
-        inputs: Single array-like object or sequence of array-like objects.
+        inputs: Single array-like object, sequence of arrays, or PyTree of arrays.
         expected_ranks: Integer rank, set of allowed ranks, or sequence of per-input rank specs.
 
     Raises:
@@ -527,26 +588,45 @@ def assert_rank(
     """
     if not are_asserts_enabled():
         return
-    is_array_seq = isinstance(inputs, (list, tuple)) and (
-        all(isinstance(item, (ArrayProtocol, ShapeOnlyProtocol)) for item in inputs) and len(inputs) > 0
-    )
+    is_array_seq = _is_pytree_container(inputs)
     is_scalar_multi_rank = (
         isinstance(inputs, (list, tuple))
+        and not isinstance(inputs, NamedTuplePyTreeProtocol)
         and len(inputs) > 0
         and isinstance(expected_ranks, (list, tuple))
-        and all(isinstance(item, (ArrayProtocol, ShapeOnlyProtocol, int, float, complex, bool)) for item in inputs)
+        and all(
+            isinstance(
+                item,
+                (
+                    ArrayProtocol,
+                    VariableLeafProtocol,
+                    ShapeOnlyProtocol,
+                    TensorSpec,
+                    int,
+                    float,
+                    complex,
+                    bool,
+                ),
+            )
+            for item in inputs
+        )
     )
-    if isinstance(inputs, (list, tuple)) and (is_array_seq or is_scalar_multi_rank):
+    if is_array_seq or is_scalar_multi_rank:
+        items_list = (
+            list(inputs)
+            if isinstance(inputs, (list, tuple)) and not isinstance(inputs, NamedTuplePyTreeProtocol)
+            else tree_leaves(inputs)
+        )
         if isinstance(expected_ranks, (list, tuple)):
-            if len(inputs) != len(expected_ranks):
+            if len(items_list) != len(expected_ranks):
                 raise ValueError(
-                    f"Length of inputs ({len(inputs)}) != length of expected_ranks ({len(expected_ranks)})."
+                    f"Length of inputs ({len(items_list)}) != length of expected_ranks ({len(expected_ranks)})."
                 )
-            for item, spec in zip(inputs, expected_ranks):
+            for item, spec in zip(items_list, expected_ranks):
                 if not _match_single_rank(_get_rank(item), spec):
                     raise AssertionError(f"Rank {_get_rank(item)} does not match expected {spec}.")
             return
-        for item in inputs:
+        for item in items_list:
             if not _match_single_rank(_get_rank(item), expected_ranks):
                 raise AssertionError(f"Rank {_get_rank(item)} does not match expected {expected_ranks}.")
         return
@@ -565,31 +645,48 @@ def assert_rank(
         raise AssertionError(f"Expected rank in {allowed}, got {r}.")
 
 
-def _dim_matches(actual_dim: int, matcher: TDimMatcher) -> bool:
+def _dim_matches(
+    actual_dim: int,
+    matcher: TDimMatcher,
+    bindings: dict[str, int] | None = None,
+) -> bool:
     """Check whether a single dimension size matches a dimension matcher token.
 
     Args:
         actual_dim: Actual integer dimension size.
-        matcher: Expected int, set of ints, tuple of ints, or None wildcard.
+        matcher: Expected int, set of ints, tuple of ints, symbolic string, or None wildcard.
+        bindings: Optional dictionary tracking symbolic dimension bindings across a call.
 
     Returns:
         True if actual_dim satisfies matcher.
     """
     if matcher is None:
         return True
-    if isinstance(matcher, int):
+    if isinstance(matcher, int) and not isinstance(matcher, bool):
         return actual_dim == matcher
     if isinstance(matcher, (set, tuple)):
         return actual_dim in matcher
+    if isinstance(matcher, str):
+        if bindings is None:
+            return True
+        if matcher in bindings:
+            return bindings[matcher] == actual_dim
+        bindings[matcher] = actual_dim
+        return True
     return False
 
 
-def _match_single_shape(actual_shape: tuple[int, ...], pattern: TShapeMatcher) -> None:
+def _match_single_shape(
+    actual_shape: tuple[int, ...],
+    pattern: TShapeMatcher,
+    bindings: dict[str, int] | None = None,
+) -> None:
     """Validate that actual_shape matches a single shape matcher pattern.
 
     Args:
         actual_shape: Tuple of integer dimensions from the array.
         pattern: Sequence of dimension matchers (supporting at most one Ellipsis).
+        bindings: Optional dictionary tracking symbolic dimension bindings.
 
     Raises:
         ValueError: If pattern contains more than one Ellipsis.
@@ -612,18 +709,18 @@ def _match_single_shape(actual_shape: tuple[int, ...], pattern: TShapeMatcher) -
         if len(actual_shape) < len(prefix_pat) + len(suffix_pat):
             raise AssertionError(f"Shape {actual_shape} is shorter than pattern {pat_tuple!r}.")
         for a, m in zip(actual_shape[: len(prefix_pat)], prefix_pat):
-            if not _dim_matches(a, m):
+            if not _dim_matches(a, m, bindings):
                 raise AssertionError(f"Shape {actual_shape} prefix does not match pattern {pat_tuple!r}.")
         if suffix_pat:
             for a, m in zip(actual_shape[-len(suffix_pat) :], suffix_pat):
-                if not _dim_matches(a, m):
+                if not _dim_matches(a, m, bindings):
                     raise AssertionError(f"Shape {actual_shape} suffix does not match pattern {pat_tuple!r}.")
         return
 
     if len(actual_shape) != len(pat_tuple):
         raise AssertionError(f"Shape {actual_shape} rank does not match expected pattern {pat_tuple!r}.")
     for a, m in zip(actual_shape, pat_tuple):
-        if not _dim_matches(a, m):
+        if not _dim_matches(a, m, bindings):
             raise AssertionError(f"Shape {actual_shape} does not match expected pattern {pat_tuple!r}.")
 
 
@@ -655,14 +752,27 @@ def _to_dim_matcher_list(
 
     Returns:
         List of individual TDimMatcher elements.
+
+    Raises:
+        ValueError: If any token in raw_shape is not a valid dimension matcher.
     """
     result: list[TDimMatcher] = []
     for item in raw_shape:
-        if item is None or item is Ellipsis or isinstance(item, (int, set)):
+        if item is None or item is Ellipsis or isinstance(item, str):
             result.append(item)
-        elif isinstance(item, tuple) and all(isinstance(x, int) for x in item):
+        elif isinstance(item, int) and not isinstance(item, bool):
+            result.append(item)
+        elif isinstance(item, set):
+            if any(isinstance(x, bool) for x in item):
+                raise ValueError(f"Invalid boolean in shape dimension matcher set: {item!r}")
+            result.append(item)
+        elif isinstance(item, tuple):
+            if any(not isinstance(x, int) or isinstance(x, bool) for x in item):
+                raise ValueError(f"Invalid shape dimension matcher tuple: {item!r}")
             int_tuple: tuple[int, ...] = tuple(x for x in item if isinstance(x, int))
             result.append(int_tuple)
+        else:
+            raise ValueError(f"Invalid shape dimension matcher token: {item!r}")
     return result
 
 
@@ -670,40 +780,40 @@ def assert_shape(
     inputs: ArrayTree,
     expected_shapes: TShapeMatcher | Sequence[TShapeMatcher],
 ) -> None:
-    """Assert that input array(s) match the expected shape pattern(s).
+    """Assert that input array(s) or PyTree leaves match the expected shape pattern(s).
 
     Args:
-        inputs: Single array-like object or sequence of array-like objects.
+        inputs: Single array-like object, sequence of arrays, or PyTree of arrays.
         expected_shapes: Shape matcher tuple or sequence of per-input shape matcher tuples.
 
     Raises:
-        ValueError: If multiple Ellipsis appear in a pattern or list lengths mismatch.
+        ValueError: If multiple Ellipsis appear in a pattern, tokens are invalid, or lengths mismatch.
         AssertionError: If any array's shape fails to match its expected pattern.
     """
     if not are_asserts_enabled():
         return
-    is_multi_input = (
-        isinstance(inputs, (list, tuple))
-        and len(inputs) > 0
-        and all(isinstance(item, (ArrayProtocol, ShapeOnlyProtocol)) for item in inputs)
-    )
-
-    if is_multi_input and isinstance(inputs, (list, tuple)):
+    bindings: dict[str, int] = {}
+    if _is_pytree_container(inputs):
+        items_list = (
+            list(inputs)
+            if isinstance(inputs, (list, tuple)) and not isinstance(inputs, NamedTuplePyTreeProtocol)
+            else tree_leaves(inputs)
+        )
         if _is_multi_shape_sequence(expected_shapes):
-            if len(inputs) != len(expected_shapes):
+            if len(items_list) != len(expected_shapes):
                 raise ValueError(
-                    f"Length of inputs ({len(inputs)}) != length of expected_shapes ({len(expected_shapes)})."
+                    f"Length of inputs ({len(items_list)}) != length of expected_shapes ({len(expected_shapes)})."
                 )
-            for item, pat in zip(inputs, expected_shapes):
-                _match_single_shape(_get_shape(item), _to_dim_matcher_list(pat))
+            for item, pat in zip(items_list, expected_shapes):
+                _match_single_shape(_get_shape(item), _to_dim_matcher_list(pat), bindings)
             return
         single_pat = _to_dim_matcher_list(expected_shapes)
-        for item in inputs:
-            _match_single_shape(_get_shape(item), single_pat)
+        for item in items_list:
+            _match_single_shape(_get_shape(item), single_pat, bindings)
         return
 
     single_pattern = _to_dim_matcher_list(expected_shapes)
-    _match_single_shape(_get_shape(inputs), single_pattern)
+    _match_single_shape(_get_shape(inputs), single_pattern, bindings)
 
 
 SingleSizeMatcher = Union[int, set[int], EllipsisType, Sequence[Union[int, set[int], EllipsisType]]]
@@ -743,10 +853,10 @@ def assert_size(
     inputs: ArrayTree,
     expected_sizes: SizeSpecElement,
 ) -> None:
-    """Assert that input array(s) have total element count matching expected_sizes.
+    """Assert that input array(s) or PyTree leaves have total element count matching expected_sizes.
 
     Args:
-        inputs: Single array-like object or sequence of array-like objects.
+        inputs: Single array-like object, sequence of arrays, or PyTree of arrays.
         expected_sizes: Integer size, set of allowed sizes, Ellipsis, or sequence of sizes.
 
     Raises:
@@ -754,23 +864,24 @@ def assert_size(
     """
     if not are_asserts_enabled():
         return
-    if (
-        isinstance(inputs, (list, tuple))
-        and len(inputs) > 0
-        and all(isinstance(item, (ArrayProtocol, ShapeOnlyProtocol)) for item in inputs)
-    ):
+    if _is_pytree_container(inputs):
+        items_list = (
+            list(inputs)
+            if isinstance(inputs, (list, tuple)) and not isinstance(inputs, NamedTuplePyTreeProtocol)
+            else tree_leaves(inputs)
+        )
         if isinstance(expected_sizes, list) or (
             isinstance(expected_sizes, tuple) and any(isinstance(s, (list, tuple, set)) for s in expected_sizes)
         ):
-            if len(inputs) != len(expected_sizes):
+            if len(items_list) != len(expected_sizes):
                 raise AssertionError(
-                    f"Length of inputs ({len(inputs)}) != length of expected_sizes ({len(expected_sizes)})."
+                    f"Length of inputs ({len(items_list)}) != length of expected_sizes ({len(expected_sizes)})."
                 )
-            for item, spec in zip(inputs, expected_sizes):
+            for item, spec in zip(items_list, expected_sizes):
                 if not _match_single_size(_get_size(item), spec):
                     raise AssertionError(f"Size {_get_size(item)} does not match expected {spec}.")
             return
-        for item in inputs:
+        for item in items_list:
             if not _match_single_size(_get_size(item), expected_sizes):
                 raise AssertionError(f"Size {_get_size(item)} does not match expected {expected_sizes}.")
         return
@@ -793,20 +904,12 @@ def _match_single_type(
     Returns:
         True if item's dtype matches spec.
     """
-    if isinstance(item, (int, float, complex, bool)):
-        if isinstance(spec, (DType, DTypeLikeProtocol, str, type)):
-            return type(item) is spec or _dtypes_match(type(item), spec)
-        return any(
-            isinstance(candidate, (DType, DTypeLikeProtocol, str, type))
-            and (type(item) is candidate or _dtypes_match(type(item), candidate))
-            for candidate in spec
-        )
-
     actual_dt = _get_type(item)
-    if isinstance(spec, (DType, DTypeLikeProtocol, str, type)):
+    if isinstance(spec, (DType, CompilerDType, DTypeLikeProtocol, str, type)):
         return _dtypes_match(actual_dt, spec)
     return any(
-        isinstance(candidate, (DType, DTypeLikeProtocol, str, type)) and _dtypes_match(actual_dt, candidate)
+        isinstance(candidate, (DType, CompilerDType, DTypeLikeProtocol, str, type))
+        and _dtypes_match(actual_dt, candidate)
         for candidate in spec
     )
 
@@ -815,10 +918,10 @@ def assert_type(
     inputs: ArrayTree,
     expected_types: ArrayDType | Sequence[ArrayDType | Sequence[ArrayDType]] | set[ArrayDType],
 ) -> None:
-    """Assert that input array(s) or scalar(s) match expected_types.
+    """Assert that input array(s), scalar(s), or PyTree leaves match expected_types.
 
     Args:
-        inputs: Single array/scalar or sequence of arrays/scalars.
+        inputs: Single array/scalar, sequence of arrays/scalars, or PyTree.
         expected_types: Expected dtype, collection of allowed dtypes, or per-input dtype specs.
 
     Raises:
@@ -826,21 +929,43 @@ def assert_type(
     """
     if not are_asserts_enabled():
         return
-    if (
+    is_seq_of_scalars_or_arrays = (
         isinstance(inputs, (list, tuple))
+        and not isinstance(inputs, NamedTuplePyTreeProtocol)
         and len(inputs) > 0
-        and all(isinstance(item, (ArrayProtocol, ShapeOnlyProtocol, int, float, complex, bool)) for item in inputs)
-    ):
+        and all(
+            isinstance(
+                item,
+                (
+                    ArrayProtocol,
+                    VariableLeafProtocol,
+                    ShapeOnlyProtocol,
+                    TensorSpec,
+                    int,
+                    float,
+                    complex,
+                    bool,
+                ),
+            )
+            for item in inputs
+        )
+    )
+    if _is_pytree_container(inputs) or is_seq_of_scalars_or_arrays:
+        items_list = (
+            list(inputs)
+            if isinstance(inputs, (list, tuple)) and not isinstance(inputs, NamedTuplePyTreeProtocol)
+            else tree_leaves(inputs)
+        )
         if isinstance(expected_types, list):
-            if len(inputs) != len(expected_types):
+            if len(items_list) != len(expected_types):
                 raise AssertionError(
-                    f"Length of inputs ({len(inputs)}) != length of expected_types ({len(expected_types)})."
+                    f"Length of inputs ({len(items_list)}) != length of expected_types ({len(expected_types)})."
                 )
-            for item, spec in zip(inputs, expected_types):
+            for item, spec in zip(items_list, expected_types):
                 if not _match_single_type(item, spec):
                     raise AssertionError(f"Type {_get_type(item)!r} does not match expected {spec!r}.")
             return
-        for item in inputs:
+        for item in items_list:
             if not _match_single_type(item, expected_types):
                 raise AssertionError(f"Type {_get_type(item)!r} does not match expected {expected_types!r}.")
         return
@@ -851,18 +976,12 @@ def assert_type(
 
 __all__ = [
     "SizeSpecElement",
-    "_get_rank",
-    "_get_shape",
-    "_get_size",
-    "_get_type",
-    "_num_devices_available",
     "assert_axis_dimension",
     "assert_axis_dimension_comparator",
     "assert_axis_dimension_gt",
     "assert_axis_dimension_gteq",
     "assert_axis_dimension_lt",
     "assert_axis_dimension_lteq",
-    "assert_devices_available",
     "assert_equal",
     "assert_equal_rank",
     "assert_equal_shape",
@@ -870,13 +989,11 @@ __all__ = [
     "assert_equal_shape_suffix",
     "assert_equal_size",
     "assert_exactly_one_is_none",
-    "assert_gpu_available",
     "assert_is_broadcastable",
     "assert_is_divisible",
     "assert_not_both_none",
     "assert_rank",
     "assert_shape",
     "assert_size",
-    "assert_tpu_available",
     "assert_type",
 ]

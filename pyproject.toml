@@ -45,14 +45,24 @@ select = [
     "D417",
     "ANN",
 ]
-ignore = ["ANN401", "UP007"]
+ignore = ["UP007"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
 [tool.mypy]
 python_version = "3.9"
-mypy_path = ["src", "../ml-switcheroo-ir/src", "../ml-ecosystem-snapshots/src"]
+mypy_path = [
+    "src",
+    "../ml-switcheroo-ir/src",
+    "../ml-switcheroo-compiler/src",
+    "../ml-ecosystem-snapshots/src",
+    "../zero-jax/src",
+    "../zero-flax/src",
+    "../zero-grain/src",
+    "../zero-optax/src",
+    "../zero-orbax/src",
+]
 files = ["src", "tests", "scripts"]
 plugins = ["pydantic.mypy"]
 strict = true
@@ -113,5 +123,15 @@ fail-under = 100
 exclude = ["setup.py", "docs", "build", "dist"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src", "../ml-switcheroo-ir/src", "../ml-ecosystem-snapshots/src"]
+pythonpath = [
+    "src",
+    "../ml-switcheroo-ir/src",
+    "../ml-switcheroo-compiler/src",
+    "../ml-ecosystem-snapshots/src",
+    "../zero-jax/src",
+    "../zero-flax/src",
+    "../zero-grain/src",
+    "../zero-optax/src",
+    "../zero-orbax/src",
+]
 addopts = "--cov=src --cov-branch --cov-report=term-missing --cov-fail-under=100"

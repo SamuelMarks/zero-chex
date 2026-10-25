@@ -7,15 +7,14 @@ import functools
 import inspect
 import itertools
 import math
+import re
 import warnings
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Optional, TypeVar, Union, overload
 
 from typing_extensions import ParamSpec
 
-from zero_chex.assertions import assert_exactly_one_is_none, assert_not_both_none
 from zero_chex.types import PyTree
-from zero_chex.variants import TestCase
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -73,7 +72,7 @@ class _DimLetterDescriptor:
             instance: The Dimensions instance.
             value: The integer, None, or sequence size specification.
         """
-        instance[self._letter] = value
+        instance._set_dim_item(self._letter, value)
 
     def __delete__(self, instance: Dimensions) -> None:
         """Delete a dimension letter from the Dimensions instance.
@@ -113,7 +112,7 @@ def _tokenize_dim_pattern(key: str) -> list[str]:
     return tokens
 
 
-class Dimensions(collections.abc.MutableMapping[str, tuple[Optional[int], ...]]):
+class Dimensions(collections.abc.Mapping[str, tuple[Optional[int], ...]]):
     """Symbolic dimension size dictionary supporting compact string shape expressions.
 
     A Dimensions mapping stores single-character dimension sizes (e.g., B=2, T=4, N=8)
@@ -279,7 +278,7 @@ class Dimensions(collections.abc.MutableMapping[str, tuple[Optional[int], ...]])
                 raise KeyError(key[i])
         return tuple(res)
 
-    def __setitem__(
+    def _set_dim_item(
         self,
         key: str | int,
         value: DimInputSpec,
@@ -311,7 +310,7 @@ class Dimensions(collections.abc.MutableMapping[str, tuple[Optional[int], ...]])
         tokens = _tokenize_dim_pattern(key)
         if isinstance(value, (int, type(None))) and not isinstance(value, bool):
             value_seq: tuple[int | None, ...] = (value,)
-        elif isinstance(value, (tuple, list)):
+        elif isinstance(value, Sequence):
             value_seq = tuple(value)
         else:
             raise TypeError(f"Invalid dimension value type: {type(value).__name__}")
@@ -329,8 +328,22 @@ class Dimensions(collections.abc.MutableMapping[str, tuple[Optional[int], ...]])
             if tok in self._dims and self._dims[tok] != v and self._dims[tok] is not None:
                 if v is not None:
                     raise ValueError(f"Conflicting assignment for dimension {tok!r}: {self._dims[tok]} vs {v}.")
+                self._dims[tok] = None
             else:
                 self._dims[tok] = v
+
+    def __setitem__(
+        self,
+        key: str | int,
+        value: DimInputSpec,
+    ) -> None:
+        """Assign one or more dimension sizes from an integer, None, or sequence.
+
+        Args:
+            key: Single-character key, multi-character pattern, or '__'-prefixed name.
+            value: Integer, None, or sequence of dimension sizes matching key.
+        """
+        self._set_dim_item(key, value)
 
     def __delitem__(self, key: str) -> None:
         """Delete a single-character dimension from the mapping.
@@ -344,6 +357,10 @@ class Dimensions(collections.abc.MutableMapping[str, tuple[Optional[int], ...]])
         if key not in self._dims:
             raise KeyError(key)
         del self._dims[key]
+
+    def clear(self) -> None:
+        """Remove all stored dimensions from the mapping."""
+        self._dims.clear()
 
     def __iter__(self) -> Iterator[str]:
         """Iterate over stored single-character dimension keys.
@@ -378,6 +395,9 @@ class Dimensions(collections.abc.MutableMapping[str, tuple[Optional[int], ...]])
             raise ValueError(f"Invalid size for key {key!r} with dimensions {dims!r}.")
         int_dims = [d for d in dims if d is not None]
         return math.prod(int_dims)
+
+
+collections.abc.MutableMapping.register(Dimensions)
 
 
 def params_product(
@@ -459,9 +479,9 @@ def get_err_regex(message: str) -> str:
         message: The error message string.
 
     Returns:
-        The error message regex string.
+        The escaped error message regex string.
     """
-    return message
+    return re.escape(message)
 
 
 def create_deprecated_function_alias(
@@ -594,6 +614,11 @@ def warn_only_n_pos_args_in_future(
 
     sig = inspect.signature(fun)
     has_varargs = any(p.kind == inspect.Parameter.VAR_POSITIONAL for p in sig.parameters.values())
+    max_pos_params = sum(
+        1
+        for p in sig.parameters.values()
+        if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    )
 
     @functools.wraps(fun)
     def _wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
@@ -610,8 +635,8 @@ def warn_only_n_pos_args_in_future(
             TypeError: If more positional arguments are given than fun accepts.
         """
         if len(args) > n:
-            if not has_varargs and len(args) > len(sig.parameters):
-                raise TypeError(f"{fun.__name__}() takes at most {len(sig.parameters)} arguments ({len(args)} given)")
+            if not has_varargs and len(args) > max_pos_params:
+                raise TypeError(f"{fun.__name__}() takes at most {max_pos_params} arguments ({len(args)} given)")
             warnings.warn(
                 f"Only {n} positional arguments will be allowed in the future.",
                 FutureWarning,
@@ -652,9 +677,6 @@ __all__ = [
     "DimInputSpec",
     "DimSizeValue",
     "Dimensions",
-    "TestCase",
-    "assert_exactly_one_is_none",
-    "assert_not_both_none",
     "create_deprecated_function_alias",
     "get_err_regex",
     "if_args_not_none",

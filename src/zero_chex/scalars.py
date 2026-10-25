@@ -2,8 +2,17 @@
 
 from __future__ import annotations
 
+import math
+
 from zero_chex.mocks import are_asserts_enabled
-from zero_chex.types import ArrayProtocol, Numeric, PyTree, Scalar, ShapeOnlyProtocol
+from zero_chex.types import (
+    ArrayProtocol,
+    Numeric,
+    PyTree,
+    Scalar,
+    VariableLeafProtocol,
+    _extract_flat_scalars,
+)
 
 
 def _extract_scalar_value(x: PyTree) -> Scalar:
@@ -18,13 +27,15 @@ def _extract_scalar_value(x: PyTree) -> Scalar:
     Raises:
         AssertionError: If x is not a scalar or is a multi-dimensional array.
     """
+    if isinstance(x, VariableLeafProtocol):
+        return _extract_scalar_value(x.value)
     if isinstance(x, (int, float, complex, bool)):
         return x
     if isinstance(x, ArrayProtocol) and x.shape == ():
-        items = x.to_list()
-        return items[0] if items else 0.0
-    if isinstance(x, ShapeOnlyProtocol) and x.shape == ():
-        return 0.0
+        items = _extract_flat_scalars(x)
+        if items:
+            return items[0]
+        raise AssertionError(f"The argument {x!r} is an empty 0-D array with no scalar value.")
     raise AssertionError(f"The argument {x!r} must be a scalar, got {type(x).__name__}.")
 
 
@@ -75,16 +86,16 @@ def assert_scalar_in(
         included: If True, checks closed interval [min_, max_]; otherwise open (min_, max_).
 
     Raises:
-        AssertionError: If x is not a real scalar or falls outside the specified interval.
+        AssertionError: If x is not a real scalar, is NaN, or falls outside the specified interval.
     """
     if not are_asserts_enabled():
         return
     val = _extract_real_scalar_float(x)
     if included:
-        if val < min_ or val > max_:
+        if math.isnan(val) or not (min_ <= val <= max_):
             raise AssertionError(f"The argument x must be in [{min_}, {max_}], was {val}.")
     else:
-        if val <= min_ or val >= max_:
+        if math.isnan(val) or not (min_ < val < max_):
             raise AssertionError(f"The argument x must be in ({min_}, {max_}), was {val}.")
 
 
@@ -95,12 +106,12 @@ def assert_scalar_negative(x: Numeric | PyTree) -> None:
         x: The scalar value to check.
 
     Raises:
-        AssertionError: If x is not a real scalar or x >= 0.
+        AssertionError: If x is not a real scalar, is NaN, or x >= 0.
     """
     if not are_asserts_enabled():
         return
     val = _extract_real_scalar_float(x)
-    if val >= 0:
+    if math.isnan(val) or not (val < 0):
         raise AssertionError(f"The argument x must be negative, was {val}.")
 
 
@@ -111,12 +122,12 @@ def assert_scalar_non_negative(x: Numeric | PyTree) -> None:
         x: The scalar value to check.
 
     Raises:
-        AssertionError: If x is not a real scalar or x < 0.
+        AssertionError: If x is not a real scalar, is NaN, or x < 0.
     """
     if not are_asserts_enabled():
         return
     val = _extract_real_scalar_float(x)
-    if val < 0:
+    if math.isnan(val) or not (val >= 0):
         raise AssertionError(f"The argument x must be non-negative, was {val}.")
 
 
@@ -127,12 +138,12 @@ def assert_scalar_positive(x: Numeric | PyTree) -> None:
         x: The scalar value to check.
 
     Raises:
-        AssertionError: If x is not a real scalar or x <= 0.
+        AssertionError: If x is not a real scalar, is NaN, or x <= 0.
     """
     if not are_asserts_enabled():
         return
     val = _extract_real_scalar_float(x)
-    if val <= 0:
+    if math.isnan(val) or not (val > 0):
         raise AssertionError(f"The argument x must be positive, was {val}.")
 
 

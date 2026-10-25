@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from ml_switcheroo_ir import DType
+from ml_switcheroo_ir import DType, TensorShape, TensorSpec
 
 from zero_chex import (
     Array,
@@ -27,6 +27,7 @@ from zero_chex.types import (
     ArrayProtocol,
     DeviceProtocol,
     PmapSharding,
+    ShardingAttrProtocol,
     ShardingProtocol,
     ZeroArray,
     is_array,
@@ -55,7 +56,7 @@ def test_public_type_aliases_and_checks() -> None:
     assert sample_device_tree == {"w": sample_device_arr}
     assert sample_dtype == DType.float32
     assert sample_np_tree == [sample_arr]
-    assert isinstance(sample_sharded, ArrayProtocol) and sample_sharded.sharding is not None
+    assert isinstance(sample_sharded, ShardingAttrProtocol) and sample_sharded.sharding is not None
     assert isinstance(sample_tree, dict) and "a" in sample_tree
     assert sample_num == 3.14
     assert sample_key == (0, 42)
@@ -148,8 +149,44 @@ def test_zero_array_methods_and_properties() -> None:
 
     z_float = ZeroArray.zeros((2, 2))
     z_int = ZeroArray.zeros(3, dtype=DType.int32)
+    z_tshape = ZeroArray.zeros(TensorShape((2, 3)))
     o_float = ZeroArray.ones((2, 2))
     o_int = ZeroArray.ones(3, dtype=DType.int32)
+    o_tshape = ZeroArray.ones(TensorShape((2, 3)))
+    arr_from_tshape = ZeroArray([1.0, 2.0], shape=TensorShape((2,)))
+    spec_f32 = TensorSpec(shape=(2, 2), dtype=DType.float32)
+    arr_from_spec = ZeroArray.from_tensor_spec(spec_f32)
+    assert z_tshape.shape == (2, 3)
+    assert o_tshape.shape == (2, 3)
+    assert arr_from_tshape.shape == (2,)
+    assert arr_from_spec.shape == (2, 2)
+    assert arr_from_spec.to_tensor_spec() == spec_f32
+    assert ZeroArray(1, dtype="int32").to_tensor_spec().dtype == DType.int32
+    assert ZeroArray(1, dtype=int).to_tensor_spec().dtype == DType.int32
+    assert ZeroArray(True, dtype=bool).to_tensor_spec().dtype == DType.bool
+    assert ZeroArray(1 + 2j, dtype=complex).to_tensor_spec().dtype == DType.complex64
+    assert ZeroArray(1.0, dtype=float).to_tensor_spec().dtype == DType.float32
+
+    class _ZeroDimTensorShapeHolder:
+        """Helper exposing 0-D TensorShape on .shape."""
+
+        @property
+        def shape(self) -> TensorShape:
+            """Return 0-D TensorShape."""
+            return TensorShape(())
+
+    class _ZeroDimTupleHolder:
+        """Helper exposing () on .shape."""
+
+        @property
+        def shape(self) -> tuple[int, ...]:
+            """Return () shape."""
+            return ()
+
+    assert is_scalar(TensorSpec(shape=(), dtype=DType.float32))
+    assert not is_scalar(spec_f32)
+    assert is_scalar(_ZeroDimTensorShapeHolder())
+    assert is_scalar(_ZeroDimTupleHolder())
     assert z_float.to_list() == [0.0, 0.0, 0.0, 0.0]
     assert z_int.to_list() == [0, 0, 0]
     assert o_float.to_list() == [1.0, 1.0, 1.0, 1.0]

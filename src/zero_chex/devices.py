@@ -10,7 +10,6 @@ from zero_chex.types import (
     DeviceProtocol,
     DevicesMethodProtocol,
     LeafValue,
-    PmapSharding,
     PyTree,
     ShardingAttrProtocol,
     ShardingProtocol,
@@ -38,10 +37,10 @@ def _check_backend_permitted(backend: str | None, default_platform: str) -> None
 
 
 def _num_devices_available(platform: str) -> int:
-    """Return the number of available devices for a given platform.
+    """Query the number of available simulated devices for a given platform.
 
     Args:
-        platform: The hardware platform identifier ('cpu', 'gpu', or 'tpu').
+        platform: Platform name ('cpu', 'gpu', or 'tpu').
 
     Returns:
         Integer count of available devices on the platform.
@@ -54,47 +53,48 @@ def _num_devices_available(platform: str) -> int:
 
 def assert_devices_available(
     n: int,
-    devtype: str = "cpu",
+    devtype: str,
     backend: str | None = None,
     not_less_than: bool = False,
 ) -> None:
-    """Assert that a specified number of devices are available on the given platform.
+    """Assert that n devices of devtype are available on the specified backend.
 
     Args:
-        n: Expected number of devices.
-        devtype: Hardware device type ('cpu', 'gpu', or 'tpu').
-        backend: Optional backend identifier.
-        not_less_than: If True, asserts available >= n; otherwise asserts available == n.
+        n: Expected number of available devices.
+        devtype: Device platform string ('cpu', 'gpu', or 'tpu').
+        backend: Optional backend identifier (defaults to devtype).
+        not_less_than: If True, asserts available >= n; otherwise available == n.
 
     Raises:
-        ValueError: If devtype or backend is unrecognized.
-        AssertionError: If the available device count does not satisfy the requirement.
+        ValueError: If devtype or backend is not a recognized platform.
+        AssertionError: If the available device count does not satisfy the condition.
     """
     if not are_asserts_enabled():
         return
-    _check_backend_permitted(backend, devtype)
-    av = _num_devices_available(devtype)
+    dtype_lower = devtype.lower()
+    _check_backend_permitted(backend, dtype_lower)
+    available = _num_devices_available(dtype_lower)
     if not_less_than:
-        if av < n:
-            raise AssertionError(f"Only {av} < {n} {devtype.upper()}s available.")
-    elif av != n:
-        raise AssertionError(f"No {n} {devtype.upper()}s available ({av} != {n}).")
+        if available < n:
+            raise AssertionError(f"Only {available} < {n} {dtype_lower.upper()}s available.")
+    else:
+        if available != n:
+            raise AssertionError(f"No {n} {dtype_lower.upper()}s available (found {available}).")
 
 
 def assert_gpu_available(backend: str | None = None) -> None:
     """Assert that at least one GPU device is available.
 
     Args:
-        backend: Optional backend identifier.
+        backend: Optional backend name to query.
 
     Raises:
-        ValueError: If backend is unrecognized.
-        AssertionError: If zero GPU devices are available or backend is restricted.
+        AssertionError: If no GPU devices are available.
     """
     if not are_asserts_enabled():
         return
     _check_backend_permitted(backend, "gpu")
-    if _num_devices_available("gpu") == 0:
+    if _num_devices_available("gpu") < 1:
         raise AssertionError("No GPU devices available.")
 
 
@@ -102,61 +102,63 @@ def assert_tpu_available(backend: str | None = None) -> None:
     """Assert that at least one TPU device is available.
 
     Args:
-        backend: Optional backend identifier.
+        backend: Optional backend name to query.
 
     Raises:
-        ValueError: If backend is unrecognized.
-        AssertionError: If zero TPU devices are available or backend is restricted.
+        AssertionError: If no TPU devices are available.
     """
     if not are_asserts_enabled():
         return
     _check_backend_permitted(backend, "tpu")
-    if _num_devices_available("tpu") == 0:
+    if _num_devices_available("tpu") < 1:
         raise AssertionError("No TPU devices available.")
 
 
 def _check_sharding(leaf: LeafValue) -> bool:
-    """Inspect whether a PyTree leaf has active PMAP/multi-device sharding.
+    """Determine whether a PyTree leaf has an active sharding configuration.
 
     Args:
         leaf: The PyTree leaf to inspect.
 
     Returns:
-        True if the leaf has a recognized sharding descriptor.
+        True if leaf has a non-None ShardingProtocol with a non-empty device_set.
     """
-    if isinstance(leaf, ShardingAttrProtocol):
-        sharding = leaf.sharding
-        if sharding is not None:
-            return isinstance(sharding, (PmapSharding, ShardingProtocol))
-    return False
+    if not isinstance(leaf, ShardingAttrProtocol):
+        return False
+    sharding = leaf.sharding
+    if sharding is None or not isinstance(sharding, ShardingProtocol):
+        return False
+    return len(sharding.device_set) > 0
 
 
 def assert_tree_is_on_device(
     tree: PyTree,
-    platform: str | Sequence[str] = ("gpu", "tpu"),
+    platform: Sequence[str] | str = ("gpu", "tpu"),
     device: DeviceProtocol | None = None,
 ) -> None:
-    """Assert that all leaves of a PyTree reside on the specified platform or device.
+    """Assert that all leaves of a PyTree reside on the specified platform(s) and/or device.
 
     Args:
         tree: The PyTree whose leaves are checked.
         platform: Allowed platform string or sequence of platform strings.
-        device: Specific DeviceProtocol instance required, if any.
+        device: Optional specific DeviceProtocol instance required for all leaves.
 
     Raises:
-        AssertionError: If any leaf is not a device array or resides on a disallowed platform/device.
+        AssertionError: If any leaf is not on a device or does not match platform/device.
     """
     if not are_asserts_enabled():
         return
-    platforms: tuple[str, ...] = (platform,) if isinstance(platform, str) else tuple(platform)
+    platforms = (platform,) if isinstance(platform, str) else tuple(platform)
     for leaf in tree_leaves(tree):
         if not isinstance(leaf, DevicesMethodProtocol):
-            raise AssertionError(f"Leaf {leaf!r} is not placed on any device (missing .devices() method).")
+            raise AssertionError(f"Leaf {leaf!r} is not placed on any device.")
         devs = leaf.devices()
-        if platforms and devs and all(d.platform not in platforms for d in devs):
-            raise AssertionError(f"Leaf {leaf!r} is on {[d.platform for d in devs]}, expected {platforms!r}.")
-        if device is not None and devs and any(d != device for d in devs):
-            raise AssertionError(f"Leaf {leaf!r} device mismatch: got {devs!r}, expected {device!r}.")
+        if not devs:
+            raise AssertionError(f"Leaf {leaf!r} has an empty devices() tuple.")
+        if platforms and any(d.platform not in platforms for d in devs):
+            raise AssertionError(f"Leaf on platforms {[d.platform for d in devs]}, expected all in {platforms}.")
+        if device is not None and any(d != device for d in devs):
+            raise AssertionError(f"Leaf device mismatch: got {devs}, expected {device}.")
 
 
 def assert_tree_is_on_host(
@@ -164,7 +166,7 @@ def assert_tree_is_on_host(
     allow_cpu_device: bool = True,
     allow_sharded_arrays: bool = False,
 ) -> None:
-    """Assert that all leaves of a PyTree reside in host (CPU) memory.
+    """Assert that all leaves in a PyTree reside in host memory (or CPU devices).
 
     Args:
         tree: The PyTree whose leaves are checked.
@@ -216,8 +218,6 @@ def assert_tree_is_sharded(
 
 
 __all__ = [
-    "_check_sharding",
-    "_num_devices_available",
     "assert_devices_available",
     "assert_gpu_available",
     "assert_tpu_available",

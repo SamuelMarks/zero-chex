@@ -25,7 +25,7 @@ repos:
 
       - id: mypy-check
         name: Mypy Strict Type Check
-        entry: env PYTHONPATH=src:../ml-switcheroo-ir/src:../ml-ecosystem-snapshots/src python3 -m mypy src tests scripts
+        entry: env PYTHONPATH=src:../ml-switcheroo-ir/src:../ml-switcheroo-compiler/src:../ml-ecosystem-snapshots/src:../zero-jax/src:../zero-flax/src:../zero-grain/src:../zero-optax/src:../zero-orbax/src python3 -m mypy src tests scripts
         language: system
         types: [python]
         pass_filenames: false
@@ -39,7 +39,7 @@ repos:
 
       - id: pytest-coverage
         name: Run Pytest Coverage
-        entry: env PYTHONPATH=src:../ml-switcheroo-ir/src:../ml-ecosystem-snapshots/src python3 -m pytest --cov=src --cov-branch --cov-report=term-missing --cov-fail-under=100
+        entry: env PYTHONPATH=src:../ml-switcheroo-ir/src:../ml-switcheroo-compiler/src:../ml-ecosystem-snapshots/src:../zero-jax/src:../zero-flax/src:../zero-grain/src:../zero-optax/src:../zero-orbax/src python3 -m pytest --cov=src --cov-branch --cov-report=term-missing --cov-fail-under=100
         language: system
         types: [python]
         pass_filenames: false
@@ -53,21 +53,21 @@ repos:
 
       - id: check-api-compliance
         name: Check API Conformance
-        entry: env PYTHONPATH=src:../ml-switcheroo-ir/src:../ml-ecosystem-snapshots/src python3 scripts/check_compliance.py
+        entry: env PYTHONPATH=src:../ml-switcheroo-ir/src:../ml-switcheroo-compiler/src:../ml-ecosystem-snapshots/src:../zero-jax/src:../zero-flax/src:../zero-grain/src:../zero-optax/src:../zero-orbax/src python3 scripts/check_compliance.py
         language: system
         files: ^(SEMANTIC_PLAN\.md|src/.*\.py)$
         pass_filenames: false
 
       - id: check-api-parity
         name: Check API Parity against Snapshot
-        entry: env PYTHONPATH=src:../ml-switcheroo-ir/src:../ml-ecosystem-snapshots/src python3 scripts/check_api_parity.py
+        entry: env PYTHONPATH=src:../ml-switcheroo-ir/src:../ml-switcheroo-compiler/src:../ml-ecosystem-snapshots/src:../zero-jax/src:../zero-flax/src:../zero-grain/src:../zero-optax/src:../zero-orbax/src python3 scripts/check_api_parity.py
         language: system
         files: ^(src/.*\.py|chex_api_snapshot\.json|scripts/check_api_parity\.py)$
         pass_filenames: false
 
       - id: check-test-parity
         name: Check Test Coverage against Snapshot
-        entry: env PYTHONPATH=src:../ml-switcheroo-ir/src:../ml-ecosystem-snapshots/src python3 scripts/check_test_parity.py
+        entry: env PYTHONPATH=src:../ml-switcheroo-ir/src:../ml-switcheroo-compiler/src:../ml-ecosystem-snapshots/src:../zero-jax/src:../zero-flax/src:../zero-grain/src:../zero-optax/src:../zero-orbax/src python3 scripts/check_test_parity.py
         language: system
         files: ^(src/.*\.py|tests/.*\.py|chex_api_snapshot\.json|scripts/check_test_parity\.py)$
         pass_filenames: false

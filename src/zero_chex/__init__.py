@@ -39,9 +39,6 @@ from zero_chex.devices import (
     assert_tree_is_sharded,
 )
 from zero_chex.mocks import (
-    are_asserts_enabled as are_asserts_enabled,
-)
-from zero_chex.mocks import (
     assert_max_traces,
     assert_numerical_grads,
     block_until_chexify_assertions_complete,

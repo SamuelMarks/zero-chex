@@ -6,30 +6,38 @@ import math
 import struct
 from collections.abc import Callable, Sequence
 
-from zero_chex._src.tree_util import tree_flatten_with_path, tree_leaves, tree_structure
-from zero_chex.assertions import _dtypes_match, _get_shape, _get_size, _get_type
-from zero_chex.devices import (
-    _check_sharding,
-    assert_tree_is_on_device,
-    assert_tree_is_on_host,
-    assert_tree_is_sharded,
+from ml_switcheroo_ir import TensorSpec
+
+from zero_chex._src.tree_util import (
+    TreeMapCallable,
+    tree_flatten_with_path,
+    tree_leaves,
+    tree_map,
+    tree_structure,
 )
+from zero_chex.assertions import _dtypes_match, _get_shape, _get_size, _get_type
 from zero_chex.mocks import are_asserts_enabled
 from zero_chex.types import (
     ArrayProtocol,
+    DictKey,
     DTypeAttrProtocol,
     LeafValue,
     PyTree,
     Scalar,
     ShapeOnlyProtocol,
+    SharedMemoryArray,
+    SharedMemoryArrayMetadata,
+    VariableLeafProtocol,
+    _extract_flat_scalars,
+    _has_valid_shape_tuple,
 )
 
 
-def _format_path(path: tuple[str | int, ...]) -> str:
+def _format_path(path: tuple[DictKey, ...]) -> str:
     """Format a PyTree key path tuple into a readable string representation.
 
     Args:
-        path: Tuple of string keys and integer indices from root to leaf.
+        path: Tuple of string, integer, or tuple keys from root to leaf.
 
     Returns:
         Formatted path string (e.g., "root['a'][0]").
@@ -49,22 +57,6 @@ def _get_leaves(tree: PyTree) -> list[LeafValue]:
         List of leaf values.
     """
     return tree_leaves(tree)
-
-
-def _extract_flat_scalars(leaf: LeafValue) -> list[Scalar]:
-    """Extract a flat list of scalar values from a leaf array or scalar.
-
-    Args:
-        leaf: Array or scalar leaf value.
-
-    Returns:
-        Flat list of numeric scalars.
-    """
-    if isinstance(leaf, ArrayProtocol):
-        return list(leaf.to_list())
-    if isinstance(leaf, (int, float, complex, bool)):
-        return [leaf]
-    return []
 
 
 def _scalar_is_nan(val: Scalar) -> bool:
@@ -119,7 +111,7 @@ def _leaf_close(
     s1 = _extract_flat_scalars(l1)
     s2 = _extract_flat_scalars(l2)
     if not s1 and not s2:
-        return l1 == l2
+        return bool(l1 == l2)
     for a, b in zip(s1, s2):
         if _scalar_is_nan(a) or _scalar_is_nan(b):
             if equal_nan and _scalar_is_nan(a) and _scalar_is_nan(b):
@@ -149,22 +141,18 @@ def _float32_ulp_diff(a: float, b: float) -> int:
     if a == b:
         return 0
     try:
-        bits_a = int(struct.unpack("!i", struct.pack("!f", a))[0])
-        bits_b = int(struct.unpack("!i", struct.pack("!f", b))[0])
+        bits_a = int(struct.unpack("!I", struct.pack("!f", a))[0])
+        bits_b = int(struct.unpack("!I", struct.pack("!f", b))[0])
     except OverflowError:
-        bits_a = int(struct.unpack("!q", struct.pack("!d", a))[0])
-        bits_b = int(struct.unpack("!q", struct.pack("!d", b))[0])
-        if bits_a < 0:
-            bits_a = -0x8000000000000000 - bits_a
-        if bits_b < 0:
-            bits_b = -0x8000000000000000 - bits_b
-        return abs(bits_a - bits_b)
+        bits_a64 = int(struct.unpack("!Q", struct.pack("!d", a))[0])
+        bits_b64 = int(struct.unpack("!Q", struct.pack("!d", b))[0])
+        ord_a64 = -(bits_a64 & 0x7FFFFFFFFFFFFFFF) if (bits_a64 & 0x8000000000000000) else bits_a64
+        ord_b64 = -(bits_b64 & 0x7FFFFFFFFFFFFFFF) if (bits_b64 & 0x8000000000000000) else bits_b64
+        return abs(ord_a64 - ord_b64)
 
-    if bits_a < 0:
-        bits_a = -0x80000000 - bits_a
-    if bits_b < 0:
-        bits_b = -0x80000000 - bits_b
-    return abs(bits_a - bits_b)
+    ord_a = -(bits_a & 0x7FFFFFFF) if (bits_a & 0x80000000) else bits_a
+    ord_b = -(bits_b & 0x7FFFFFFF) if (bits_b & 0x80000000) else bits_b
+    return abs(ord_a - ord_b)
 
 
 def _leaf_close_ulp(l1: LeafValue, l2: LeafValue, maxulp: int = 1) -> bool:
@@ -183,7 +171,7 @@ def _leaf_close_ulp(l1: LeafValue, l2: LeafValue, maxulp: int = 1) -> bool:
     s1 = _extract_flat_scalars(l1)
     s2 = _extract_flat_scalars(l2)
     if not s1 and not s2:
-        return l1 == l2
+        return bool(l1 == l2)
     for a, b in zip(s1, s2):
         if _scalar_is_nan(a) or _scalar_is_nan(b):
             return False
@@ -223,8 +211,13 @@ def _leaf_equal(l1: LeafValue, l2: LeafValue, strict: bool = False) -> bool:
     s1 = _extract_flat_scalars(l1)
     s2 = _extract_flat_scalars(l2)
     if s1 or s2:
-        return s1 == s2
-    return l1 == l2
+        for a, b in zip(s1, s2):
+            if isinstance(a, bool) != isinstance(b, bool):
+                return False
+            if a != b:
+                return False
+        return True
+    return bool(l1 == l2)
 
 
 def assert_tree_all_finite(tree_like: PyTree) -> None:
@@ -257,13 +250,23 @@ def assert_tree_has_only_ndarrays(tree: PyTree) -> None:
         tree: The PyTree whose leaves are checked.
 
     Raises:
-        AssertionError: If any leaf does not expose a shape attribute.
+        AssertionError: If any leaf does not expose a valid shape attribute.
     """
     if not are_asserts_enabled():
         return
     path_leaves, _ = tree_flatten_with_path(tree)
     for path, leaf in path_leaves:
-        if not isinstance(leaf, (ArrayProtocol, ShapeOnlyProtocol)):
+        inner = leaf.value if isinstance(leaf, VariableLeafProtocol) else leaf
+        is_ndarray = isinstance(
+            inner,
+            (
+                ArrayProtocol,
+                SharedMemoryArray,
+                SharedMemoryArrayMetadata,
+                TensorSpec,
+            ),
+        ) or (isinstance(inner, ShapeOnlyProtocol) and _has_valid_shape_tuple(inner))
+        if not is_ndarray:
             raise AssertionError(
                 f"Tree leaf {leaf!r} at {_format_path(path)} of type {type(leaf).__name__} is not an ndarray."
             )
@@ -323,11 +326,11 @@ def assert_tree_shape_suffix(tree: PyTree, shape_suffix: Sequence[int]) -> None:
     if not are_asserts_enabled():
         return
     suffix = tuple(shape_suffix)
-    if not suffix:
-        return
     path_leaves, _ = tree_flatten_with_path(tree)
     for path, leaf in path_leaves:
         s = _get_shape(leaf)
+        if not suffix:
+            continue
         if len(s) < len(suffix) or s[-len(suffix) :] != suffix:
             raise AssertionError(f"Leaf shape {s} at {_format_path(path)} does not end with expected suffix {suffix}.")
 
@@ -339,7 +342,6 @@ def assert_trees_all_equal_structs(*trees: PyTree) -> None:
         *trees: Two or more PyTrees to compare structurally.
 
     Raises:
-        ValueError: If container types at the root mismatch.
         AssertionError: If the PyTreeDef structures of any two trees differ.
     """
     if not are_asserts_enabled():
@@ -349,10 +351,6 @@ def assert_trees_all_equal_structs(*trees: PyTree) -> None:
     first_tree = trees[0]
     def0 = tree_structure(first_tree)
     for t in trees[1:]:
-        if type(first_tree) is not type(t) and (
-            isinstance(first_tree, (dict, list, tuple)) or isinstance(t, (dict, list, tuple))
-        ):
-            raise ValueError(f"Trees have different root types: {type(first_tree).__name__} vs {type(t).__name__}.")
         if tree_structure(t) != def0:
             raise AssertionError(f"Trees have different structures: {def0!r} vs {tree_structure(t)!r}.")
 
@@ -370,7 +368,6 @@ def assert_trees_all_equal_comparator(
         *trees: Two or more PyTrees to compare.
 
     Raises:
-        ValueError: If root container types differ.
         AssertionError: If structures differ or equality_comparator returns False for any leaf pair.
     """
     if not are_asserts_enabled():
@@ -401,7 +398,6 @@ def assert_trees_all_close(
         equal_nan: Whether NaNs in corresponding positions are considered equal.
 
     Raises:
-        ValueError: If root container types differ.
         AssertionError: If structures differ or any leaves are not within tolerance.
     """
     if not are_asserts_enabled():
@@ -424,7 +420,6 @@ def assert_trees_all_close_ulp(
         maxulp: Maximum number of ULPs allowed between corresponding leaf elements.
 
     Raises:
-        ValueError: If root container types differ.
         AssertionError: If structures differ or leaves differ by more than maxulp ULPs.
     """
     if not are_asserts_enabled():
@@ -447,7 +442,6 @@ def assert_trees_all_equal(
         strict: Whether to also enforce strict dtype equality on leaves.
 
     Raises:
-        ValueError: If root container types differ.
         AssertionError: If structures or leaf values differ.
     """
     if not are_asserts_enabled():
@@ -466,7 +460,6 @@ def assert_trees_all_equal_dtypes(*trees: PyTree) -> None:
         *trees: Two or more PyTrees to compare.
 
     Raises:
-        ValueError: If root container types differ.
         AssertionError: If any leaf lacks a dtype attribute or leaf dtypes differ.
     """
     if not are_asserts_enabled():
@@ -478,14 +471,18 @@ def assert_trees_all_equal_dtypes(*trees: PyTree) -> None:
     for other_tree in trees[1:]:
         other_leaves = _get_leaves(other_tree)
         for (path, l1), l2 in zip(path_leaves0, other_leaves):
-            if not isinstance(l1, (ArrayProtocol, DTypeAttrProtocol)) or not isinstance(
-                l2, (ArrayProtocol, DTypeAttrProtocol)
+            inner1 = l1.value if isinstance(l1, VariableLeafProtocol) else l1
+            inner2 = l2.value if isinstance(l2, VariableLeafProtocol) else l2
+            if not isinstance(inner1, (ArrayProtocol, DTypeAttrProtocol, TensorSpec)) or not isinstance(
+                inner2, (ArrayProtocol, DTypeAttrProtocol, TensorSpec)
             ):
                 raise AssertionError(
                     f"Leaf {l1!r} or {l2!r} at {_format_path(path)} is not a (j-)np array exposing dtype."
                 )
-            if not _dtypes_match(l1.dtype, l2.dtype):
-                raise AssertionError(f"Leaf dtypes do not match at {_format_path(path)}: {l1.dtype!r} != {l2.dtype!r}.")
+            if not _dtypes_match(inner1.dtype, inner2.dtype):
+                raise AssertionError(
+                    f"Leaf dtypes do not match at {_format_path(path)}: {inner1.dtype!r} != {inner2.dtype!r}."
+                )
 
 
 def assert_trees_all_equal_shapes(*trees: PyTree) -> None:
@@ -495,7 +492,6 @@ def assert_trees_all_equal_shapes(*trees: PyTree) -> None:
         *trees: Two or more PyTrees to compare.
 
     Raises:
-        ValueError: If root container types differ.
         AssertionError: If any corresponding leaves have different shapes.
     """
     if not are_asserts_enabled():
@@ -514,7 +510,6 @@ def assert_trees_all_equal_sizes(*trees: PyTree) -> None:
         *trees: Two or more PyTrees to compare.
 
     Raises:
-        ValueError: If root container types differ.
         AssertionError: If any corresponding leaves have different total element counts.
     """
     if not are_asserts_enabled():
@@ -533,7 +528,6 @@ def assert_trees_all_equal_shapes_and_dtypes(*trees: PyTree) -> None:
         *trees: Two or more PyTrees to compare.
 
     Raises:
-        ValueError: If root container types differ.
         AssertionError: If structures, leaf shapes, or leaf dtypes differ.
     """
     if not are_asserts_enabled():
@@ -543,13 +537,10 @@ def assert_trees_all_equal_shapes_and_dtypes(*trees: PyTree) -> None:
 
 
 __all__ = [
-    "_check_sharding",
-    "_get_leaves",
+    "TreeMapCallable",
+    "_extract_flat_scalars",
     "assert_tree_all_finite",
     "assert_tree_has_only_ndarrays",
-    "assert_tree_is_on_device",
-    "assert_tree_is_on_host",
-    "assert_tree_is_sharded",
     "assert_tree_no_nones",
     "assert_tree_shape_prefix",
     "assert_tree_shape_suffix",
@@ -562,4 +553,5 @@ __all__ = [
     "assert_trees_all_equal_shapes_and_dtypes",
     "assert_trees_all_equal_sizes",
     "assert_trees_all_equal_structs",
+    "tree_map",
 ]

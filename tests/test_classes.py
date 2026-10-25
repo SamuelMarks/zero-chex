@@ -212,6 +212,20 @@ def test_variants_and_testcase() -> None:
             self.seen_variants.append(self._active_variant.type)
             return 8
 
+        @variants(with_jit=True, without_jit=True)
+        def run_parameterized(self, a: int, b: int = 10) -> int:
+            """Run parameterized method across variants.
+
+            Args:
+                a: First integer parameter.
+                b: Second integer parameter.
+
+            Returns:
+                a + b.
+            """
+            fn = self.variant(_inc1)
+            return fn(a) + b
+
     inst = SampleTest()
     assert inst.run_jit() == 5
     assert inst.run_without_jit() == 1
@@ -241,6 +255,7 @@ def test_variants_and_testcase() -> None:
     inst.seen_variants.clear()
     assert inst.run_kw_all_variants() == 8
     assert len(inst.seen_variants) == 4
+    assert inst.run_parameterized(5, b=20) == 26
     assert SampleTest.run_jit(inst) == 5
 
     with restrict_backends(forbidden=["cpu"]):

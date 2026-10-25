@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import pytest
+import zero_jax.numpy as jnp
+from zero_flax.nnx.variables import Param
 
 from zero_chex import (
     assert_scalar,
@@ -11,11 +13,11 @@ from zero_chex import (
     assert_scalar_non_negative,
     assert_scalar_positive,
 )
-from zero_chex.types import ZeroArray
+from zero_chex.types import ZeroArray, is_scalar
 
 
 class _DummyZeroDimShape:
-    """Helper class exposing only a 0-D shape tuple."""
+    """Helper class exposing only a 0-D shape tuple with no scalar value."""
 
     @property
     def shape(self) -> tuple[int, ...]:
@@ -68,9 +70,14 @@ def test_assert_scalar() -> None:
     assert_scalar(1 + 2j)
     assert_scalar(ZeroArray(3.0))
     assert_scalar(ZeroArray(1 + 2j))
-    assert_scalar(_DummyEmptyZeroDimArray())
-    assert_scalar(_DummyZeroDimShape())
+    assert_scalar(Param(jnp.array(3.0)))
+    assert is_scalar(Param(jnp.array(3.0)))
+    assert not is_scalar(Param(jnp.array([1.0, 2.0])))
 
+    with pytest.raises(AssertionError, match="empty 0-D array"):
+        assert_scalar(_DummyEmptyZeroDimArray())
+    with pytest.raises(AssertionError, match="must be a scalar"):
+        assert_scalar(_DummyZeroDimShape())
     with pytest.raises(AssertionError, match="must be a scalar"):
         assert_scalar([1])
     with pytest.raises(AssertionError, match="must be a scalar"):
@@ -80,41 +87,52 @@ def test_assert_scalar() -> None:
 
 
 def test_assert_scalar_in() -> None:
-    """Test assert_scalar_in with closed, open, and complex inputs."""
+    """Test assert_scalar_in with closed, open, NaN, Inf, and complex inputs."""
     assert_scalar_in(5, 0, 10)
     assert_scalar_in(0, 0, 10, included=True)
     assert_scalar_in(10, 0, 10, included=True)
     assert_scalar_in(ZeroArray(5.0), 0, 10)
-    assert_scalar_in(_DummyZeroDimShape(), -1, 1)
 
+    with pytest.raises(AssertionError, match="must be a scalar"):
+        assert_scalar_in(_DummyZeroDimShape(), -1, 1)
     with pytest.raises(AssertionError, match="must be a real scalar"):
         assert_scalar_in(1 + 2j, 0, 10)
     with pytest.raises(AssertionError, match="must be in"):
         assert_scalar_in(-1, 0, 10)
     with pytest.raises(AssertionError, match="must be in"):
         assert_scalar_in(11, 0, 10)
+    with pytest.raises(AssertionError, match="must be in"):
+        assert_scalar_in(float("nan"), 0, 10)
+    with pytest.raises(AssertionError, match="must be in"):
+        assert_scalar_in(float("inf"), 0, 10)
+    with pytest.raises(AssertionError, match="must be in"):
+        assert_scalar_in(float("-inf"), 0, 10)
 
     assert_scalar_in(5, 0, 10, included=False)
     with pytest.raises(AssertionError, match="must be in"):
         assert_scalar_in(0, 0, 10, included=False)
     with pytest.raises(AssertionError, match="must be in"):
         assert_scalar_in(10, 0, 10, included=False)
+    with pytest.raises(AssertionError, match="must be in"):
+        assert_scalar_in(float("nan"), 0, 10, included=False)
 
 
 def test_assert_scalar_negative() -> None:
-    """Test assert_scalar_negative for negative, zero, positive, and complex values."""
+    """Test assert_scalar_negative for negative, zero, positive, NaN, and complex values."""
     assert_scalar_negative(-1)
     assert_scalar_negative(-0.5)
     with pytest.raises(AssertionError, match="must be negative"):
         assert_scalar_negative(0)
     with pytest.raises(AssertionError, match="must be negative"):
         assert_scalar_negative(1)
+    with pytest.raises(AssertionError, match="must be negative"):
+        assert_scalar_negative(float("nan"))
     with pytest.raises(AssertionError, match="must be a real scalar"):
         assert_scalar_negative(-1 + 2j)
 
 
 def test_assert_scalar_non_negative() -> None:
-    """Test assert_scalar_non_negative for positive, zero, negative, and complex values."""
+    """Test assert_scalar_non_negative for positive, zero, negative, NaN, and complex values."""
     assert_scalar_non_negative(0)
     assert_scalar_non_negative(1)
     assert_scalar_non_negative(0.5)
@@ -122,17 +140,21 @@ def test_assert_scalar_non_negative() -> None:
         assert_scalar_non_negative(-1)
     with pytest.raises(AssertionError, match="must be non-negative"):
         assert_scalar_non_negative(-0.1)
+    with pytest.raises(AssertionError, match="must be non-negative"):
+        assert_scalar_non_negative(float("nan"))
     with pytest.raises(AssertionError, match="must be a real scalar"):
         assert_scalar_non_negative(1 + 2j)
 
 
 def test_assert_scalar_positive() -> None:
-    """Test assert_scalar_positive for positive, zero, negative, and complex values."""
+    """Test assert_scalar_positive for positive, zero, negative, NaN, and complex values."""
     assert_scalar_positive(1)
     assert_scalar_positive(0.5)
     with pytest.raises(AssertionError, match="must be positive"):
         assert_scalar_positive(0)
     with pytest.raises(AssertionError, match="must be positive"):
         assert_scalar_positive(-1)
+    with pytest.raises(AssertionError, match="must be positive"):
+        assert_scalar_positive(float("nan"))
     with pytest.raises(AssertionError, match="must be a real scalar"):
         assert_scalar_positive(1 + 2j)

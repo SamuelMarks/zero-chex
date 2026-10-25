@@ -11,9 +11,11 @@ from typing import Generic, Protocol, TypeVar, overload, runtime_checkable
 from typing_extensions import ParamSpec
 
 from zero_chex.mocks import _STATE
+from zero_chex.types import PyTree
 
 P = ParamSpec("P")
 R = TypeVar("R")
+R_co = TypeVar("R_co", covariant=True)
 TInstance = TypeVar("TInstance")
 
 
@@ -65,6 +67,7 @@ class VariantDecorator:
             Wrapped function executing under the variant's semantics.
         """
         vtype = self.type
+        trace_key = _STATE.allocate_fn_key("variant_target")
 
         @functools.wraps(target_fn)
         def _wrapped(*args: P.args, **kwargs: P.kwargs) -> R:
@@ -81,15 +84,17 @@ class VariantDecorator:
                 AssertionError: If the active variant requires a backend forbidden by restrict_backends.
             """
             self.call_count += 1
-            if vtype in (ChexVariantType.WITH_DEVICE, ChexVariantType.WITH_PMAP):
+            if vtype in (ChexVariantType.WITH_DEVICE, ChexVariantType.WITH_PMAP, ChexVariantType.WITH_JIT):
                 if _STATE.forbidden_backends is not None and "cpu" in _STATE.forbidden_backends:
                     raise AssertionError("Backend 'cpu' is forbidden by restrict_backends.")
                 if _STATE.allowed_backends is not None and "cpu" not in _STATE.allowed_backends:
                     raise AssertionError(f"Backend 'cpu' is not in allowed backends {_STATE.allowed_backends!r}.")
             if vtype == ChexVariantType.WITH_JIT and not _STATE.jit_disabled:
                 with _STATE.lock:
-                    fn_id = id(target_fn)
-                    _STATE.trace_counts[fn_id] = _STATE.trace_counts.get(fn_id, 0) + 1
+                    _STATE.trace_counts[trace_key] = _STATE.trace_counts.get(trace_key, 0) + 1
+            elif vtype == ChexVariantType.WITH_PMAP and not _STATE.pmap_disabled:
+                with _STATE.lock:
+                    _STATE.trace_counts[trace_key] = _STATE.trace_counts.get(trace_key, 0) + 1
             return target_fn(*args, **kwargs)
 
         return _wrapped
@@ -181,19 +186,35 @@ class TestCase(unittest.TestCase):
         return self._active_variant(fn, **kwargs)
 
 
+class BoundMethodProtocol(Protocol[R_co]):
+    """Protocol for a bound test method accepting zero or more PyTree arguments."""
+
+    def __call__(self, *args: PyTree, **kwargs: PyTree) -> R_co:
+        """Invoke the bound test method.
+
+        Args:
+            *args: Positional arguments.
+            **kwargs: Keyword arguments.
+
+        Returns:
+            Result of the test method.
+        """
+        ...
+
+
 class BoundVariantsTestMethod(Generic[TInstance, R]):
     """Bound callable representing a VariantsTestMethodWrapper bound to a test instance."""
 
     def __init__(
         self,
-        bound_func: Callable[[], R],
+        bound_func: BoundMethodProtocol[R],
         wrapper: VariantsTestMethodWrapper[P, R],
         instance: TInstance,
     ) -> None:
         """Initialize a BoundVariantsTestMethod.
 
         Args:
-            bound_func: The underlying method already bound to instance via descriptor protocol.
+            bound_func: The underlying method already bound to instance via types.MethodType.
             wrapper: The originating VariantsTestMethodWrapper.
             instance: The bound test class instance.
         """
@@ -201,17 +222,30 @@ class BoundVariantsTestMethod(Generic[TInstance, R]):
         self._wrapper = wrapper
         self._instance = instance
 
-    def __call__(self) -> R:
+    def __call__(self, *args: PyTree, **kwargs: PyTree) -> R:
         """Invoke the bound test method across all configured variants.
+
+        Args:
+            *args: Positional arguments forwarded to the bound test method.
+            **kwargs: Keyword arguments forwarded to the bound test method.
 
         Returns:
             The return value from the final executed variant.
         """
         self._wrapper.executed_variants.clear()
         vtypes = self._wrapper.variant_types
-        result: R = self._wrapper._run_bound_variant(vtypes[0], self._instance, self._bound_func)
+        call_target = functools.partial(self._bound_func, *args, **kwargs)
+        result: R = self._wrapper._run_bound_variant(
+            vtypes[0],
+            self._instance,
+            call_target,
+        )
         for vtype in vtypes[1:]:
-            result = self._wrapper._run_bound_variant(vtype, self._instance, self._bound_func)
+            result = self._wrapper._run_bound_variant(
+                vtype,
+                self._instance,
+                call_target,
+            )
         return result
 
 
@@ -256,7 +290,7 @@ class VariantsTestMethodWrapper(Generic[P, R]):
         Args:
             vtype: The variant type to activate.
             instance: Bound test class instance.
-            bound_call: Zero-argument callable bound to instance.
+            bound_call: Zero-argument callable bound to instance and call arguments.
 
         Returns:
             The return value of bound_call().
@@ -267,7 +301,8 @@ class VariantsTestMethodWrapper(Generic[P, R]):
             prev = instance._active_variant
             instance._active_variant = decorator
             try:
-                return bound_call()
+                with instance.subTest(variant=vtype.value):
+                    return bound_call()
             finally:
                 instance._active_variant = prev
         if isinstance(instance, VariantAttributeHolderProtocol):
@@ -302,7 +337,8 @@ class VariantsTestMethodWrapper(Generic[P, R]):
             prev = test_instance._active_variant
             test_instance._active_variant = decorator
             try:
-                return self._func(*args, **kwargs)
+                with test_instance.subTest(variant=vtype.value):
+                    return self._func(*args, **kwargs)
             finally:
                 test_instance._active_variant = prev
         if args and isinstance(args[0], VariantAttributeHolderProtocol):
@@ -361,7 +397,7 @@ class VariantsTestMethodWrapper(Generic[P, R]):
         """
         if instance is None:
             return self
-        bound_func: Callable[[], R] = self._func.__get__(instance, owner)
+        bound_func: BoundMethodProtocol[R] = self._func.__get__(instance, owner)
         return BoundVariantsTestMethod(bound_func, self, instance)
 
 

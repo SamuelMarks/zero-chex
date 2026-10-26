@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Iterator, Mapping
-from typing import Protocol, TypeVar
+import dataclasses
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from typing import Protocol, TypeVar, Union
 
+import zero_jax.tree_util as jax_tree_util
 from ml_switcheroo_ir import LogicalNode, SymInt, SymNode, TensorSpec
 from typing_extensions import TypeGuard
 
+from zero_chex._src.asserts_internal import extract_flat_scalars as _extract_flat_scalars
 from zero_chex.types import (
     ArrayProtocol,
+    CustomNodeType,
+    DataclassInstanceProtocol,
     DeviceProtocol,
     DevicesMethodProtocol,
     DictKey,
@@ -25,12 +30,14 @@ from zero_chex.types import (
     SharedMemoryArray,
     SharedMemoryArrayMetadata,
     StateMappingProtocol,
+    TaylorScalarProtocol,
     VariableLeafProtocol,
-    _extract_flat_scalars,
 )
 
-FlattenFn = Callable[[MappableDataclassProtocol], tuple[tuple[PyTree, ...], tuple[str, ...]]]
-UnflattenFn = Callable[[tuple[str, ...], tuple[PyTree, ...]], PyTree]
+CustomDataclassInstance = Union[MappableDataclassProtocol, DataclassInstanceProtocol]
+CustomDataclassType = Union[type[MappableDataclassProtocol], type[DataclassInstanceProtocol]]
+FlattenFn = Callable[[CustomDataclassInstance], tuple[tuple[PyTree, ...], tuple[str, ...]]]
+UnflattenFn = Callable[[tuple[str, ...], Sequence[PyTree]], PyTree]
 
 
 class TreeMapCallable(Protocol):
@@ -49,15 +56,15 @@ class TreeMapCallable(Protocol):
 
 
 TCls = TypeVar("TCls")
-_CUSTOM_PYTREE_NODES: dict[type[MappableDataclassProtocol], tuple[FlattenFn, UnflattenFn]] = {}
+_CUSTOM_PYTREE_NODES: dict[CustomDataclassType, tuple[FlattenFn, UnflattenFn]] = {}
 
 
 def register_custom_pytree_node(
-    cls: type[MappableDataclassProtocol],
+    cls: CustomDataclassType,
     flatten_fn: FlattenFn,
     unflatten_fn: UnflattenFn,
 ) -> None:
-    """Register a custom dataclass type for PyTree traversal.
+    """Register a custom dataclass type for PyTree traversal in zero_chex and zero_jax.
 
     Args:
         cls: The class type to register as an internal PyTree container node.
@@ -65,10 +72,11 @@ def register_custom_pytree_node(
         unflatten_fn: Callable reconstructing an instance from field names and child values.
     """
     _CUSTOM_PYTREE_NODES[cls] = (flatten_fn, unflatten_fn)
+    jax_tree_util.register_dataclass(cls)
 
 
 def _lookup_custom_pytree_node(
-    cls: type[MappableDataclassProtocol],
+    cls: CustomDataclassType,
 ) -> tuple[FlattenFn, UnflattenFn] | None:
     """Look up registered custom PyTree flatten and unflatten functions by class reference.
 
@@ -81,22 +89,22 @@ def _lookup_custom_pytree_node(
     return _CUSTOM_PYTREE_NODES.get(cls)
 
 
-def _is_mappable_dataclass_cls(
-    cls: type[MappableDataclassProtocol] | type[NamedTuplePyTreeProtocol] | type[StateMappingProtocol],
-) -> TypeGuard[type[MappableDataclassProtocol]]:
-    """Check whether a custom container class is a MappableDataclassProtocol subclass.
+def _is_custom_dataclass_cls(
+    cls: CustomNodeType,
+) -> TypeGuard[CustomDataclassType]:
+    """Check whether a custom container class is a MappableDataclassProtocol or DataclassInstanceProtocol.
 
     Args:
         cls: Custom container class type.
 
     Returns:
-        True if cls is a MappableDataclassProtocol type.
+        True if cls is a MappableDataclassProtocol or registered DataclassInstanceProtocol type.
     """
-    return issubclass(cls, MappableDataclassProtocol)
+    return issubclass(cls, MappableDataclassProtocol) or dataclasses.is_dataclass(cls) or cls in _CUSTOM_PYTREE_NODES
 
 
 def _is_namedtuple_cls(
-    cls: type[MappableDataclassProtocol] | type[NamedTuplePyTreeProtocol] | type[StateMappingProtocol],
+    cls: CustomNodeType,
 ) -> TypeGuard[type[NamedTuplePyTreeProtocol]]:
     """Check whether a custom container class is a NamedTuplePyTreeProtocol subclass.
 
@@ -110,7 +118,7 @@ def _is_namedtuple_cls(
 
 
 def _is_state_mapping_cls(
-    cls: type[MappableDataclassProtocol] | type[NamedTuplePyTreeProtocol] | type[StateMappingProtocol],
+    cls: CustomNodeType,
 ) -> TypeGuard[type[StateMappingProtocol]]:
     """Check whether a custom container class is a StateMappingProtocol subclass.
 
@@ -132,7 +140,7 @@ def _is_leaf_value(node: PyTree) -> TypeGuard[LeafValue]:
     Returns:
         True if node is a leaf value rather than a traversable container.
     """
-    if isinstance(node, MappableDataclassProtocol):
+    if isinstance(node, MappableDataclassProtocol) or type(node) in _CUSTOM_PYTREE_NODES:
         return False
     if isinstance(
         node,
@@ -165,6 +173,8 @@ def _is_leaf_value(node: PyTree) -> TypeGuard[LeafValue]:
             ShardingAttrProtocol,
             DTypeAttrProtocol,
             OptStateLeafProtocol,
+            DataclassInstanceProtocol,
+            TaylorScalarProtocol,
         ),
     )
 
@@ -206,13 +216,16 @@ def tree_flatten_with_path(
         Returns:
             PyTreeDef describing the visited subtree.
         """
-        if isinstance(node, MappableDataclassProtocol):
+        if isinstance(node, (MappableDataclassProtocol, DataclassInstanceProtocol)) and (
+            isinstance(node, MappableDataclassProtocol) or type(node) in _CUSTOM_PYTREE_NODES
+        ):
             node_cls = type(node)
             custom_entry = _lookup_custom_pytree_node(node_cls)
             if custom_entry is not None:
                 flatten_fn, _ = custom_entry
                 children_vals, field_names = flatten_fn(node)
             else:
+                assert isinstance(node, MappableDataclassProtocol)
                 field_names = node.__chex_mappable_fields__()
                 children_vals = node.__chex_field_values__()
             child_defs = tuple(
@@ -363,7 +376,7 @@ def tree_unflatten(treedef: PyTreeDef, leaves: Iterable[LeafValue]) -> PyTree:
             custom_cls = current_def.custom_cls
             if _is_namedtuple_cls(custom_cls):
                 return custom_cls(*built_children)
-            if _is_mappable_dataclass_cls(custom_cls):
+            if _is_custom_dataclass_cls(custom_cls):
                 custom_entry = _lookup_custom_pytree_node(custom_cls)
                 if custom_entry is not None:
                     _, unflatten_fn = custom_entry

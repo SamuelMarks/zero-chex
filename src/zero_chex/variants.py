@@ -6,17 +6,26 @@ import functools
 import unittest
 from collections.abc import Callable, Sequence
 from enum import Enum
-from typing import Generic, Protocol, TypeVar, overload, runtime_checkable
+from typing import Generic, Protocol, TypeVar, Union, overload, runtime_checkable
 
-from typing_extensions import ParamSpec
+import zero_jax
+from typing_extensions import ParamSpec, TypeGuard
 
-from zero_chex.mocks import _STATE
-from zero_chex.types import PyTree
+from zero_chex._src.asserts_internal import (
+    RUNTIME_STATE as _STATE,
+)
+from zero_chex._src.asserts_internal import (
+    check_backend_permitted,
+)
+from zero_chex._src.tree_util import tree_map
+from zero_chex.mocks import _abstract_arg_signature, _fake_pmap_impl, _is_pytree_result
+from zero_chex.types import Device, JaxNdarray, LeafValue, PyTree, ZeroArray
 
 P = ParamSpec("P")
 R = TypeVar("R")
 R_co = TypeVar("R_co", covariant=True)
 TInstance = TypeVar("TInstance")
+VariantKwargValue = Union[bool, int, str, Sequence[int], Sequence[str], Device, None]
 
 
 @runtime_checkable
@@ -45,6 +54,61 @@ class ChexVariantType(Enum):
         return self.value
 
 
+def _place_leaf_on_device(leaf: LeafValue, target_dev: Device) -> LeafValue:
+    """Place a single PyTree leaf onto target_dev if it is a ZeroArray or JaxNdarray.
+
+    Args:
+        leaf: Leaf value to transfer.
+        target_dev: Target Device instance.
+
+    Returns:
+        Device-placed leaf value.
+    """
+    if isinstance(leaf, ZeroArray):
+        return ZeroArray(
+            leaf.to_list(),
+            shape=leaf.shape,
+            dtype=leaf.dtype,
+            device=target_dev,
+            sharding=leaf.sharding,
+        )
+    if isinstance(leaf, JaxNdarray):
+        return zero_jax.device_put(leaf, target_dev.platform)
+    return leaf
+
+
+def _is_int_or_int_seq(val: VariantKwargValue) -> TypeGuard[int | Sequence[int]]:
+    """Check whether val is an integer or a sequence of integers.
+
+    Args:
+        val: Candidate VariantKwargValue.
+
+    Returns:
+        True if val is an int (not bool) or Sequence[int].
+    """
+    if isinstance(val, int) and not isinstance(val, bool):
+        return True
+    return (
+        isinstance(val, Sequence)
+        and not isinstance(val, str)
+        and all(isinstance(x, int) and not isinstance(x, bool) for x in val)
+    )
+
+
+def _is_str_or_str_seq(val: VariantKwargValue) -> TypeGuard[str | Sequence[str]]:
+    """Check whether val is a string or a sequence of strings.
+
+    Args:
+        val: Candidate VariantKwargValue.
+
+    Returns:
+        True if val is a str or Sequence[str].
+    """
+    if isinstance(val, str):
+        return True
+    return isinstance(val, Sequence) and all(isinstance(x, str) for x in val)
+
+
 class VariantDecorator:
     """Callable variant wrapper attached to TestCase.variant during test execution."""
 
@@ -57,17 +121,39 @@ class VariantDecorator:
         self.type: ChexVariantType = variant_type
         self.call_count: int = 0
 
-    def _wrap_target(self, target_fn: Callable[P, R]) -> Callable[P, R]:
-        """Wrap a target callable according to self.type.
+    def _wrap_target(
+        self,
+        target_fn: Callable[P, R],
+        **variant_kwargs: VariantKwargValue,
+    ) -> Callable[P, R]:
+        """Wrap a target callable according to self.type and variant_kwargs.
 
         Args:
             target_fn: The function to transform under the active variant.
+            **variant_kwargs: Optional variant transformation options (e.g., static_argnums, backend, device).
 
         Returns:
             Wrapped function executing under the variant's semantics.
         """
         vtype = self.type
         trace_key = _STATE.allocate_fn_key("variant_target")
+        raw_backend = variant_kwargs.get("backend")
+        raw_device = variant_kwargs.get("device")
+        if isinstance(raw_backend, str):
+            target_platform = raw_backend
+        elif isinstance(raw_device, Device):
+            target_platform = raw_device.platform
+        elif isinstance(raw_device, str):
+            target_platform = raw_device.split(":")[0]
+        else:
+            target_platform = "cpu"
+
+        raw_static_nums = variant_kwargs.get("static_argnums")
+        static_argnums: int | Sequence[int] | None = raw_static_nums if _is_int_or_int_seq(raw_static_nums) else None
+        raw_static_names = variant_kwargs.get("static_argnames")
+        static_argnames: str | Sequence[str] | None = raw_static_names if _is_str_or_str_seq(raw_static_names) else None
+        raw_axis_name = variant_kwargs.get("axis_name")
+        axis_name: str | None = raw_axis_name if isinstance(raw_axis_name, str) else None
 
         @functools.wraps(target_fn)
         def _wrapped(*args: P.args, **kwargs: P.kwargs) -> R:
@@ -85,16 +171,53 @@ class VariantDecorator:
             """
             self.call_count += 1
             if vtype in (ChexVariantType.WITH_DEVICE, ChexVariantType.WITH_PMAP, ChexVariantType.WITH_JIT):
-                if _STATE.forbidden_backends is not None and "cpu" in _STATE.forbidden_backends:
-                    raise AssertionError("Backend 'cpu' is forbidden by restrict_backends.")
-                if _STATE.allowed_backends is not None and "cpu" not in _STATE.allowed_backends:
-                    raise AssertionError(f"Backend 'cpu' is not in allowed backends {_STATE.allowed_backends!r}.")
+                check_backend_permitted(target_platform, "cpu")
             if vtype == ChexVariantType.WITH_JIT and not _STATE.jit_disabled:
+                pytree_args = [a for a in args if _is_pytree_result(a)]
+                pytree_kwargs = {k: v for k, v in kwargs.items() if _is_pytree_result(v)}
+                sig = _abstract_arg_signature(
+                    pytree_args,
+                    pytree_kwargs,
+                    static_argnums=static_argnums,
+                    static_argnames=static_argnames,
+                )
                 with _STATE.lock:
-                    _STATE.trace_counts[trace_key] = _STATE.trace_counts.get(trace_key, 0) + 1
-            elif vtype == ChexVariantType.WITH_PMAP and not _STATE.pmap_disabled:
+                    seen = _STATE.trace_seen_signatures.setdefault(trace_key, set())
+                    if sig not in seen:
+                        seen.add(sig)
+                        _STATE.trace_counts[trace_key] = _STATE.trace_counts.get(trace_key, 0) + 1
+            elif vtype == ChexVariantType.WITH_PMAP:
+                if _STATE.pmap_disabled:
+                    faked = _fake_pmap_impl(target_fn, axis_name=axis_name)
+                    return faked(*args, **kwargs)
+                pytree_args = [a for a in args if _is_pytree_result(a)]
+                pytree_kwargs = {k: v for k, v in kwargs.items() if _is_pytree_result(v)}
+                sig = _abstract_arg_signature(pytree_args, pytree_kwargs)
                 with _STATE.lock:
-                    _STATE.trace_counts[trace_key] = _STATE.trace_counts.get(trace_key, 0) + 1
+                    seen = _STATE.trace_seen_signatures.setdefault(trace_key, set())
+                    if sig not in seen:
+                        seen.add(sig)
+                        _STATE.trace_counts[trace_key] = _STATE.trace_counts.get(trace_key, 0) + 1
+            elif vtype == ChexVariantType.WITH_DEVICE:
+                target_dev = raw_device if isinstance(raw_device, Device) else Device(target_platform, 0)
+
+                def _place_fn(*leaves: LeafValue) -> LeafValue:
+                    """Place the first leaf onto target_dev.
+
+                    Args:
+                        *leaves: Single-element leaf tuple.
+
+                    Returns:
+                        Placed leaf value.
+                    """
+                    return _place_leaf_on_device(leaves[0], target_dev)
+
+                pytree_args = [a for a in args if _is_pytree_result(a)]
+                pytree_kwargs = {k: v for k, v in kwargs.items() if _is_pytree_result(v)}
+                placed_args = tree_map(_place_fn, pytree_args)
+                placed_kwargs = tree_map(_place_fn, pytree_kwargs)
+                assert isinstance(placed_args, list) and isinstance(placed_kwargs, dict)
+                return functools.partial(target_fn, *placed_args, **placed_kwargs)()
             return target_fn(*args, **kwargs)
 
         return _wrapped
@@ -103,31 +226,30 @@ class VariantDecorator:
     def __call__(
         self,
         fn: Callable[P, R],
-        **kwargs: bool | int | str | None,
+        **kwargs: VariantKwargValue,
     ) -> Callable[P, R]: ...
 
     @overload
     def __call__(
         self,
         fn: None = None,
-        **kwargs: bool | int | str | None,
+        **kwargs: VariantKwargValue,
     ) -> Callable[[Callable[P, R]], Callable[P, R]]: ...
 
     def __call__(
         self,
         fn: Callable[P, R] | None = None,
-        **kwargs: bool | int | str | None,
+        **kwargs: VariantKwargValue,
     ) -> Callable[P, R] | Callable[[Callable[P, R]], Callable[P, R]]:
         """Decorate a function under the active test variant.
 
         Args:
             fn: The function to wrap, or None when parameterized with keyword arguments.
-            **kwargs: Optional compilation arguments (e.g., static_argnums).
+            **kwargs: Optional compilation arguments (e.g., static_argnums, backend, device).
 
         Returns:
             The wrapped function or a decorator accepting the function.
         """
-        _ = kwargs
         if fn is None:
 
             def _dec(target_fn: Callable[P, R]) -> Callable[P, R]:
@@ -139,10 +261,10 @@ class VariantDecorator:
                 Returns:
                     The transformed callable.
                 """
-                return self._wrap_target(target_fn)
+                return self._wrap_target(target_fn, **kwargs)
 
             return _dec
-        return self._wrap_target(fn)
+        return self._wrap_target(fn, **kwargs)
 
 
 class TestCase(unittest.TestCase):
@@ -155,20 +277,20 @@ class TestCase(unittest.TestCase):
     def variant(
         self,
         fn: Callable[P, R],
-        **kwargs: bool | int | str | None,
+        **kwargs: VariantKwargValue,
     ) -> Callable[P, R]: ...
 
     @overload
     def variant(
         self,
         fn: None = None,
-        **kwargs: bool | int | str | None,
+        **kwargs: VariantKwargValue,
     ) -> Callable[[Callable[P, R]], Callable[P, R]]: ...
 
     def variant(
         self,
         fn: Callable[P, R] | None = None,
-        **kwargs: bool | int | str | None,
+        **kwargs: VariantKwargValue,
     ) -> Callable[P, R] | Callable[[Callable[P, R]], Callable[P, R]]:
         """Transform a function according to the active test variant.
 
@@ -444,32 +566,32 @@ def _select_variant_types(
 @overload
 def variants(
     test_method: Callable[P, R],
-    with_jit: bool = False,
-    without_jit: bool = False,
-    with_device: bool = False,
-    without_device: bool = False,
-    with_pmap: bool = False,
+    with_jit: bool | int | str | None = False,
+    without_jit: bool | int | str | None = False,
+    with_device: bool | int | str | None = False,
+    without_device: bool | int | str | None = False,
+    with_pmap: bool | int | str | None = False,
 ) -> VariantsTestMethodWrapper[P, R]: ...
 
 
 @overload
 def variants(
     test_method: str = "__no__default__",
-    with_jit: bool = False,
-    without_jit: bool = False,
-    with_device: bool = False,
-    without_device: bool = False,
-    with_pmap: bool = False,
+    with_jit: bool | int | str | None = False,
+    without_jit: bool | int | str | None = False,
+    with_device: bool | int | str | None = False,
+    without_device: bool | int | str | None = False,
+    with_pmap: bool | int | str | None = False,
 ) -> Callable[[Callable[P, R]], VariantsTestMethodWrapper[P, R]]: ...
 
 
 def variants(
     test_method: Callable[P, R] | str = "__no__default__",
-    with_jit: bool = False,
-    without_jit: bool = False,
-    with_device: bool = False,
-    without_device: bool = False,
-    with_pmap: bool = False,
+    with_jit: bool | int | str | None = False,
+    without_jit: bool | int | str | None = False,
+    with_device: bool | int | str | None = False,
+    without_device: bool | int | str | None = False,
+    with_pmap: bool | int | str | None = False,
 ) -> VariantsTestMethodWrapper[P, R] | Callable[[Callable[P, R]], VariantsTestMethodWrapper[P, R]]:
     """Decorate a test method to run under specified compilation/device variants.
 
@@ -484,12 +606,19 @@ def variants(
     Returns:
         Wrapped test method or a decorator returning a wrapped test method.
     """
-    selected = _select_variant_types(
+    check_variant_arguments(
         with_jit=with_jit,
         without_jit=without_jit,
         with_device=with_device,
         without_device=without_device,
         with_pmap=with_pmap,
+    )
+    selected = _select_variant_types(
+        with_jit=bool(with_jit),
+        without_jit=bool(without_jit),
+        with_device=bool(with_device),
+        without_device=bool(without_device),
+        with_pmap=bool(with_pmap),
     )
 
     def _decorator(func: Callable[P, R]) -> VariantsTestMethodWrapper[P, R]:

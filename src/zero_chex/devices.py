@@ -4,9 +4,19 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from zero_chex._src.asserts_internal import (
+    are_asserts_enabled,
+)
+from zero_chex._src.asserts_internal import (
+    check_backend_permitted as _check_backend_permitted,
+)
+from zero_chex._src.asserts_internal import (
+    num_devices_available as _num_devices_available,
+)
+from zero_chex._src.asserts_internal import (
+    raise_chex_error as _raise_chex_error,
+)
 from zero_chex._src.tree_util import tree_leaves
-from zero_chex.assertions import _raise_chex_error
-from zero_chex.mocks import _STATE, are_asserts_enabled, get_num_devices_available
 from zero_chex.types import (
     DeviceProtocol,
     DevicesMethodProtocol,
@@ -16,44 +26,6 @@ from zero_chex.types import (
     ShardingAttrProtocol,
     ShardingProtocol,
 )
-
-
-def _check_backend_permitted(backend: str | None, default_platform: str) -> None:
-    """Validate that a target backend/platform is permitted under active restrict_backends.
-
-    Args:
-        backend: Explicit backend name or None.
-        default_platform: Fallback platform name if backend is None.
-
-    Raises:
-        ValueError: If backend is not a recognized platform ('cpu', 'gpu', 'tpu').
-        AssertionError: If the target backend is forbidden or excluded by restrict_backends.
-    """
-    target = backend if backend is not None else default_platform
-    if target not in ("cpu", "gpu", "tpu"):
-        raise ValueError(f"Unknown backend: {target}")
-    if _STATE.forbidden_backends is not None and target in _STATE.forbidden_backends:
-        raise AssertionError(f"Backend {target!r} is forbidden by restrict_backends.")
-    if _STATE.allowed_backends is not None and target not in _STATE.allowed_backends:
-        raise AssertionError(f"Backend {target!r} is not in allowed backends {_STATE.allowed_backends!r}.")
-
-
-def _num_devices_available(platform: str, backend: str | None = None) -> int:
-    """Query the number of available simulated devices for a given platform.
-
-    Args:
-        platform: Platform name ('cpu', 'gpu', or 'tpu').
-        backend: Optional backend filter name.
-
-    Returns:
-        Integer count of available devices on the platform.
-
-    Raises:
-        ValueError: If platform is unknown.
-    """
-    if backend is not None:
-        _check_backend_permitted(backend, platform)
-    return get_num_devices_available(platform)
 
 
 def assert_devices_available(

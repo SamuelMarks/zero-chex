@@ -7,13 +7,13 @@ import functools
 import inspect
 import itertools
 import math
-import re
 import warnings
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Optional, TypeVar, Union, overload
 
 from typing_extensions import ParamSpec
 
+from zero_chex._src.asserts_internal import get_err_regex
 from zero_chex.types import PyTree
 
 P = ParamSpec("P")
@@ -474,18 +474,6 @@ def if_args_not_none(
     return fn(*args, **kwargs)
 
 
-def get_err_regex(message: str) -> str:
-    """Return a regular expression pattern matching the provided error message.
-
-    Args:
-        message: The error message string.
-
-    Returns:
-        The escaped error message regex string.
-    """
-    return re.escape(message)
-
-
 def create_deprecated_function_alias(
     fun: Callable[P, R],
     new_name: str,
@@ -505,7 +493,8 @@ def create_deprecated_function_alias(
     Returns:
         Wrapped callable that issues a DeprecationWarning when called.
     """
-    _ = (deprecated_alias, args, kwargs)
+    _ = (args, kwargs)
+    prefix = f"Function {deprecated_alias} is deprecated" if deprecated_alias else "This function is deprecated"
 
     @functools.wraps(fun)
     def _wrapper(*f_args: P.args, **f_kwargs: P.kwargs) -> R:
@@ -519,7 +508,7 @@ def create_deprecated_function_alias(
             Result of fun(*f_args, **f_kwargs).
         """
         warnings.warn(
-            f"This function is deprecated; please use {new_name} instead.",
+            f"{prefix}; please use {new_name} instead.",
             DeprecationWarning,
             stacklevel=2,
         )

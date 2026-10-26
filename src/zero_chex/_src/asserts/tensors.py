@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+from zero_chex._src.asserts_internal import (
+    get_leaf_shape as _get_shape,
+)
+from zero_chex._src.asserts_internal import (
+    get_leaf_size as _get_size,
+)
+from zero_chex._src.asserts_internal import (
+    get_leaf_type as _get_type,
+)
 from zero_chex.assertions import (
     _get_rank,
-    _get_shape,
-    _get_size,
-    _get_type,
     assert_axis_dimension,
     assert_axis_dimension_comparator,
     assert_axis_dimension_gt,

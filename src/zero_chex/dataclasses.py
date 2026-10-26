@@ -5,23 +5,16 @@ from __future__ import annotations
 import collections.abc
 import dataclasses
 import functools
-from collections.abc import Callable, Iterator
-from typing import ClassVar, Protocol, TypeVar, overload, runtime_checkable
+from collections.abc import Callable, Iterator, Sequence
+from typing import Protocol, TypeVar, overload
 
-from typing_extensions import dataclass_transform
+from typing_extensions import TypeGuard, dataclass_transform
 
-from zero_chex._src.tree_util import register_custom_pytree_node
-from zero_chex.types import MappableDataclassProtocol, PyTree
+from zero_chex._src.tree_util import CustomDataclassType, register_custom_pytree_node
+from zero_chex.types import DataclassInstanceProtocol, MappableDataclassProtocol, PyTree
 
 T = TypeVar("T")
 T_contra = TypeVar("T_contra", contravariant=True)
-
-
-@runtime_checkable
-class DataclassInstanceProtocol(Protocol):
-    """Protocol representing a standard Python dataclass instance."""
-
-    __dataclass_fields__: ClassVar[dict[str, dataclasses.Field[PyTree]]]
 
 
 class _KwOnlyInitProtocol(Protocol[T_contra]):
@@ -47,13 +40,12 @@ def _get_field_names(instance: MappableDataclassProtocol | DataclassInstanceProt
     Returns:
         Tuple of declared field name strings.
     """
-    if isinstance(instance, DataclassInstanceProtocol):
-        return tuple(f.name for f in dataclasses.fields(instance))
-    return instance.__chex_mappable_fields__()
+    assert isinstance(instance, DataclassInstanceProtocol)
+    return tuple(f.name for f in dataclasses.fields(instance))
 
 
-def _get_shallow_dataclass_values(instance: DataclassInstanceProtocol) -> tuple[PyTree, ...]:
-    """Extract declared dataclass field values shallowly without deep-copying or converting containers.
+def _get_field_values(instance: MappableDataclassProtocol | DataclassInstanceProtocol) -> tuple[PyTree, ...]:
+    """Extract declared dataclass field values shallowly in declaration order.
 
     Args:
         instance: Dataclass instance to inspect.
@@ -61,6 +53,7 @@ def _get_shallow_dataclass_values(instance: DataclassInstanceProtocol) -> tuple[
     Returns:
         Ordered tuple of field values corresponding to declared dataclass fields.
     """
+    assert isinstance(instance, DataclassInstanceProtocol)
     inst_dict = vars(instance)
     values: list[PyTree] = []
     for f in dataclasses.fields(instance):
@@ -68,20 +61,6 @@ def _get_shallow_dataclass_values(instance: DataclassInstanceProtocol) -> tuple[
             val: PyTree = inst_dict[f.name]
             values.append(val)
     return tuple(values)
-
-
-def _get_field_values(instance: MappableDataclassProtocol | DataclassInstanceProtocol) -> tuple[PyTree, ...]:
-    """Return the current field values for a dataclass instance in declaration order.
-
-    Args:
-        instance: Dataclass instance to inspect.
-
-    Returns:
-        Tuple of field values.
-    """
-    if isinstance(instance, DataclassInstanceProtocol):
-        return _get_shallow_dataclass_values(instance)
-    return instance.__chex_field_values__()
 
 
 def _extract_dataclass_fields(instance: MappableDataclassProtocol | DataclassInstanceProtocol) -> dict[str, PyTree]:
@@ -105,9 +84,7 @@ class MappableDataclassMixin(collections.abc.Mapping[str, PyTree]):
         Returns:
             Tuple of field name strings.
         """
-        if isinstance(self, DataclassInstanceProtocol):
-            return tuple(f.name for f in dataclasses.fields(self))
-        return ()
+        return _get_field_names(self)
 
     def __chex_field_values__(self) -> tuple[PyTree, ...]:
         """Return the ordered tuple of current dataclass field values.
@@ -115,9 +92,7 @@ class MappableDataclassMixin(collections.abc.Mapping[str, PyTree]):
         Returns:
             Tuple of field values.
         """
-        if isinstance(self, DataclassInstanceProtocol):
-            return _get_shallow_dataclass_values(self)
-        return ()
+        return _get_field_values(self)
 
     def __getitem__(self, key: str) -> PyTree:
         """Retrieve a dataclass field value by field name.
@@ -164,16 +139,13 @@ class MappableDataclassMixin(collections.abc.Mapping[str, PyTree]):
         Raises:
             TypeError: If an unknown field name is provided in changes.
         """
-        field_map = (
-            _extract_dataclass_fields(self)
-            if isinstance(self, (MappableDataclassProtocol, DataclassInstanceProtocol))
-            else {}
-        )
+        cls_type: type[T] = type(self)
+        assert isinstance(self, (MappableDataclassProtocol, DataclassInstanceProtocol))
+        field_map = _extract_dataclass_fields(self)
         for k, v in changes.items():
             if k not in field_map:
-                raise TypeError(f"{type(self).__name__}.replace() got an unexpected keyword argument {k!r}")
+                raise TypeError(f"{cls_type.__name__}.replace() got an unexpected keyword argument {k!r}")
             field_map[k] = v
-        cls_type = type(self)
         return cls_type(**field_map)
 
     def to_tuple(self) -> tuple[tuple[PyTree, ...], tuple[str, ...]]:
@@ -235,6 +207,63 @@ def _make_kw_only_dataclass(cls: type[T]) -> type[T]:
     return derived
 
 
+def _is_registrable_dataclass_cls(cls: type[T]) -> TypeGuard[CustomDataclassType]:
+    """Verify that cls is a dataclass or MappableDataclassProtocol class suitable for PyTree registration.
+
+    Args:
+        cls: Class to check.
+
+    Returns:
+        True if cls is a dataclass or MappableDataclassProtocol subclass.
+    """
+    return dataclasses.is_dataclass(cls) or issubclass(cls, MappableDataclassProtocol)
+
+
+def _register_dataclass_pytree(dc_cls: type[T]) -> None:
+    """Register a dataclass class with zero_chex and zero_jax PyTree registries.
+
+    Args:
+        dc_cls: The dataclass class to register.
+    """
+
+    def _flatten(
+        obj: MappableDataclassProtocol | DataclassInstanceProtocol,
+    ) -> tuple[tuple[PyTree, ...], tuple[str, ...]]:
+        """Flatten a dataclass instance into a tuple of field values and field names.
+
+        Args:
+            obj: The dataclass instance to flatten.
+
+        Returns:
+            Tuple of (field_values, field_names).
+        """
+        field_map = _extract_dataclass_fields(obj)
+        keys = tuple(field_map.keys())
+        values = tuple(field_map.values())
+        return values, keys
+
+    def _unflatten(
+        aux_data: tuple[str, ...],
+        children: Sequence[PyTree],
+    ) -> PyTree:
+        """Reconstruct a dataclass instance from field names and flattened children.
+
+        Args:
+            aux_data: Tuple of field names.
+            children: Sequence of reconstructed child values.
+
+        Returns:
+            New dataclass instance.
+        """
+        kwargs = dict(zip(aux_data, children))
+        inst = functools.partial(dc_cls, **kwargs)()
+        assert isinstance(inst, (MappableDataclassProtocol, DataclassInstanceProtocol))
+        return inst
+
+    assert _is_registrable_dataclass_cls(dc_cls)
+    register_custom_pytree_node(dc_cls, _flatten, _unflatten)
+
+
 def _apply_mappable_dataclass(
     cls: type[T],
     kw_only: bool = False,
@@ -256,7 +285,7 @@ def _apply_mappable_dataclass(
         if kw_only:
             cls = _make_kw_only_dataclass(cls)
         if register_pytree:
-            _register_mappable_cls(cls)
+            _register_dataclass_pytree(cls)
         return cls
 
     collections.abc.Mapping.register(cls)
@@ -287,7 +316,7 @@ def _apply_mappable_dataclass(
     bases: tuple[type[T] | type[MappableDataclassMixin], ...] = (cls, MappableDataclassMixin)
     derived: type[T] = type(cls.__name__, bases, namespace)
     if register_pytree:
-        _register_mappable_cls(derived)
+        _register_dataclass_pytree(derived)
     return derived
 
 
@@ -303,55 +332,8 @@ def mappable_dataclass(cls: type[T]) -> type[T]:
     return _apply_mappable_dataclass(cls)
 
 
-def _register_mappable_cls(mappable_cls: type[T]) -> None:
-    """Register a mappable dataclass class with the PyTree utility registry.
-
-    Args:
-        mappable_cls: The mappable dataclass class to register.
-    """
-
-    def _flatten(obj: MappableDataclassProtocol) -> tuple[tuple[PyTree, ...], tuple[str, ...]]:
-        """Flatten a dataclass instance into a tuple of field values and field names.
-
-        Args:
-            obj: The dataclass instance to flatten.
-
-        Returns:
-            Tuple of (field_values, field_names).
-        """
-        field_map = _extract_dataclass_fields(obj)
-        keys = tuple(field_map.keys())
-        values = tuple(field_map.values())
-        return values, keys
-
-    def _unflatten(
-        aux_data: tuple[str, ...],
-        children: tuple[PyTree, ...],
-    ) -> PyTree:
-        """Reconstruct a dataclass instance from field names and flattened children.
-
-        Args:
-            aux_data: Tuple of field names.
-            children: Tuple of reconstructed child values.
-
-        Returns:
-            New dataclass instance.
-        """
-        if aux_data:
-            kwargs = dict(zip(aux_data, children))
-            inst = functools.partial(mappable_cls, **kwargs)()
-        else:
-            inst = functools.partial(mappable_cls, *children)()
-        if isinstance(inst, MappableDataclassProtocol):
-            return inst
-        return children
-
-    assert issubclass(mappable_cls, MappableDataclassProtocol)
-    register_custom_pytree_node(mappable_cls, _flatten, _unflatten)
-
-
 def register_dataclass_type_with_jax_tree_util(data_class: type[T]) -> type[T]:
-    """Register a dataclass type with the PyTree utility registry.
+    """Register a dataclass type with the zero_chex and zero_jax PyTree registries.
 
     Args:
         data_class: The dataclass type to register as a PyTree container node.
@@ -359,7 +341,10 @@ def register_dataclass_type_with_jax_tree_util(data_class: type[T]) -> type[T]:
     Returns:
         The registered dataclass type.
     """
-    return _apply_mappable_dataclass(data_class, register_pytree=True)
+    if not dataclasses.is_dataclass(data_class):
+        data_class = dataclasses.dataclass(data_class)
+    _register_dataclass_pytree(data_class)
+    return data_class
 
 
 @overload

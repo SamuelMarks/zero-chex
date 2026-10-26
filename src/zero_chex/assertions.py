@@ -2,106 +2,50 @@
 
 from __future__ import annotations
 
-import math
 from collections.abc import Callable, Mapping, Sequence
-from typing import NoReturn, Union
+from typing import Union
 
-from ml_switcheroo_ir import DType, ShapeMismatchError, TensorShape, TensorSpec, broadcast_shapes
+from ml_switcheroo_ir import ShapeMismatchError, broadcast_shapes
 from typing_extensions import TypeGuard
 
-from zero_chex._src.tree_util import tree_leaves
-from zero_chex.mocks import are_asserts_enabled
+from zero_chex._src.asserts_internal import (
+    are_asserts_enabled,
+)
+from zero_chex._src.asserts_internal import (
+    dtypes_match as _dtypes_match,
+)
+from zero_chex._src.asserts_internal import (
+    get_leaf_shape as _get_shape,
+)
+from zero_chex._src.asserts_internal import (
+    get_leaf_size as _get_size,
+)
+from zero_chex._src.asserts_internal import (
+    get_leaf_type as _get_type,
+)
+from zero_chex._src.asserts_internal import (
+    raise_chex_error as _raise_chex_error,
+)
+from zero_chex._src.tree_util import _CUSTOM_PYTREE_NODES, tree_leaves
 from zero_chex.types import (
-    _VALID_DTYPE_NAMES,
     ArrayDType,
     ArrayProtocol,
     ArrayTree,
     CompilerDType,
-    DTypeAttrProtocol,
+    CompilerTensor,
+    DType,
     DTypeLikeProtocol,
     EllipsisType,
+    JaxNdarray,
     MappableDataclassProtocol,
     NamedTuplePyTreeProtocol,
     PyTree,
     Scalar,
     ShapeOnlyProtocol,
-    SharedMemoryArray,
     StateMappingProtocol,
     TDimMatcher,
     TShapeMatcher,
-    VariableLeafProtocol,
-    _has_valid_shape_tuple,
 )
-
-
-def _raise_chex_error(
-    default_msg: str,
-    *,
-    custom_message: str | None = None,
-    custom_message_format_vars: Sequence[Scalar | str] = (),
-    include_default_message: bool = True,
-    exception_type: type[Exception] = AssertionError,
-) -> NoReturn:
-    """Format and raise a Chex assertion error with optional custom message and exception type.
-
-    Args:
-        default_msg: The standard failure message produced by the assertion.
-        custom_message: Optional user-supplied error message or format string.
-        custom_message_format_vars: Positional format arguments interpolated into custom_message.
-        include_default_message: Whether to include default_msg alongside custom_message.
-        exception_type: Exception class to instantiate and raise.
-
-    Raises:
-        Exception: An instance of exception_type with the formatted message.
-    """
-    if custom_message is not None:
-        formatted_custom = (
-            custom_message.format(*custom_message_format_vars) if custom_message_format_vars else custom_message
-        )
-        final_msg = (
-            f"{default_msg} [{formatted_custom}]"
-            if include_default_message
-            else f"[Chex] Assertion failed: {formatted_custom}"
-        )
-    else:
-        final_msg = default_msg
-    raise exception_type(final_msg)
-
-
-def _get_shape(x: PyTree) -> tuple[int, ...]:
-    """Extract the shape tuple of an array-like object, sequence, or scalar.
-
-    Args:
-        x: The array, nested sequence, or scalar to inspect.
-
-    Returns:
-        A tuple of dimension integers representing the shape of x.
-
-    Raises:
-        AssertionError: If x is a ragged nested sequence with inconsistent sub-shapes.
-    """
-    if isinstance(x, VariableLeafProtocol):
-        return _get_shape(x.value)
-    if isinstance(x, SharedMemoryArray):
-        return tuple(x.metadata.shape)
-    if isinstance(x, TensorSpec):
-        return x.static_shape
-    if isinstance(x, ArrayProtocol):
-        return tuple(x.shape)
-    if isinstance(x, ShapeOnlyProtocol) and _has_valid_shape_tuple(x):
-        raw_s = x.shape
-        if isinstance(raw_s, TensorShape):
-            return raw_s.static_shape
-        return tuple(int(d) for d in raw_s)
-    if isinstance(x, (list, tuple)) and not isinstance(x, NamedTuplePyTreeProtocol):
-        if not x:
-            return (0,)
-        first_sub = _get_shape(x[0])
-        for elem in x[1:]:
-            if _get_shape(elem) != first_sub:
-                raise AssertionError(f"Ragged sequence has inconsistent sub-shapes: {[_get_shape(e) for e in x]}")
-        return (len(x),) + first_sub
-    return ()
 
 
 def _get_rank(x: PyTree) -> int:
@@ -116,127 +60,43 @@ def _get_rank(x: PyTree) -> int:
     return len(_get_shape(x))
 
 
-def _get_size(x: PyTree) -> int:
-    """Compute the total number of scalar elements in an array-like object.
-
-    Args:
-        x: The array, sequence, or scalar to inspect.
-
-    Returns:
-        Product of all dimensions in the shape of x.
-    """
-    return math.prod(_get_shape(x))
-
-
-def _normalize_dtype(dt: ArrayDType) -> str:
-    """Normalize a DType enum, Python scalar type, or string into a canonical dtype label.
-
-    Args:
-        dt: Data type specification to normalize.
-
-    Returns:
-        Canonical lowercase dtype category or name string.
-
-    Raises:
-        ValueError: If dt is a DTypeLikeProtocol whose name is not a valid dtype name.
-    """
-    if isinstance(dt, (DType, CompilerDType)):
-        return str(dt.value).lower()
-    if isinstance(dt, DTypeLikeProtocol):
-        cand = dt.name.lower()
-        if cand.startswith("dtype."):
-            cand = cand.split(".", 1)[1]
-        if cand not in _VALID_DTYPE_NAMES:
-            raise ValueError(f"Unrecognized dtype name: {dt.name!r}")
-        return "bool" if cand == "bool_" else cand
-    if isinstance(dt, type):
-        if dt is bool:
-            return "bool"
-        if dt is int:
-            return "int"
-        if dt is float:
-            return "float"
-        if dt is complex:
-            return "complex"
-        return dt.__name__.lower()
-    raw = str(dt).lower()
-    if raw.startswith("dtype."):
-        raw = raw.split(".", 1)[1]
-    return "bool" if raw == "bool_" else raw
-
-
-def _get_type(x: PyTree) -> ArrayDType:
-    """Retrieve the raw data type of an array or Python scalar.
-
-    Args:
-        x: The array or scalar to inspect.
-
-    Returns:
-        The dtype attribute of x if present, or its Python type.
-    """
-    if isinstance(x, VariableLeafProtocol):
-        return _get_type(x.value)
-    if isinstance(x, SharedMemoryArray):
-        return str(x.metadata.dtype) if x.metadata.dtype is not None else "float32"
-    if isinstance(x, TensorSpec):
-        return x.dtype
-    if isinstance(x, (ArrayProtocol, DTypeAttrProtocol)):
-        return x.dtype
-    if isinstance(x, (int, float, complex, bool)):
-        return type(x)
-    return str(type(x).__name__)
-
-
-def _dtypes_match(actual: ArrayDType, expected: ArrayDType) -> bool:
-    """Compare an actual dtype against an expected dtype specification.
-
-    Args:
-        actual: The actual dtype extracted from an input value.
-        expected: The expected dtype specification.
-
-    Returns:
-        True if actual matches expected under Chex dtype promotion/category rules.
-    """
-    norm_a = _normalize_dtype(actual)
-    norm_e = _normalize_dtype(expected)
-    if norm_a == norm_e:
-        return True
-    if norm_e in ("int", "float", "complex", "bool") and norm_a.startswith(norm_e):
-        return True
-    if norm_a in ("int", "float", "complex", "bool") and norm_e.startswith(norm_a):
-        return True
-    return False
-
-
 def _is_pytree_container(inputs: ArrayTree) -> bool:
-    """Determine whether inputs is a PyTree container of multiple array/scalar leaves.
+    """Determine whether inputs is a PyTree container or sequence of multiple array/scalar leaves.
 
     Args:
         inputs: Input argument passed to assert_rank, assert_shape, assert_size, or assert_type.
 
     Returns:
-        True if inputs is a Mapping, custom PyTree container protocol, or list/tuple of arrays.
+        True if inputs is a Mapping, custom PyTree container protocol, or non-empty list/tuple.
     """
-    if isinstance(inputs, (Mapping, MappableDataclassProtocol, NamedTuplePyTreeProtocol, StateMappingProtocol)):
-        return True
-    if isinstance(inputs, (list, tuple)) and len(inputs) > 0:
-        return all(
-            isinstance(
-                item,
-                (
-                    ArrayProtocol,
-                    VariableLeafProtocol,
-                    ShapeOnlyProtocol,
-                    TensorSpec,
-                    Mapping,
-                    MappableDataclassProtocol,
-                    NamedTuplePyTreeProtocol,
-                    StateMappingProtocol,
-                ),
-            )
-            for item in inputs
+    if (
+        isinstance(
+            inputs,
+            (
+                Mapping,
+                MappableDataclassProtocol,
+                NamedTuplePyTreeProtocol,
+                StateMappingProtocol,
+            ),
         )
-    return False
+        or type(inputs) in _CUSTOM_PYTREE_NODES
+    ):
+        return True
+    return isinstance(inputs, (list, tuple)) and len(inputs) > 0
+
+
+def _is_input_sequence(inputs: Sequence[ArrayTree] | ArrayTree) -> TypeGuard[Sequence[ArrayTree]]:
+    """Determine whether inputs is a valid sequence of arrays for assert_equal_* functions.
+
+    Args:
+        inputs: Candidate sequence of arrays.
+
+    Returns:
+        True if inputs is a non-string, non-array Sequence (e.g., list, tuple, custom Sequence).
+    """
+    if isinstance(inputs, (str, bytes, ArrayProtocol, CompilerTensor, JaxNdarray, ShapeOnlyProtocol)):
+        return False
+    return isinstance(inputs, Sequence)
 
 
 def assert_equal(
@@ -663,7 +523,7 @@ def assert_equal_rank(
     """
     if not are_asserts_enabled():
         return
-    if not isinstance(inputs, (list, tuple)):
+    if not _is_input_sequence(inputs):
         raise ValueError("inputs must be a list or tuple of arrays.")
     if not inputs:
         return
@@ -704,7 +564,7 @@ def assert_equal_shape(
     """
     if not are_asserts_enabled():
         return
-    if not isinstance(inputs, (list, tuple)):
+    if not _is_input_sequence(inputs):
         raise ValueError("inputs must be a list or tuple of arrays.")
     if not inputs:
         return
@@ -771,7 +631,7 @@ def assert_equal_shape_prefix(
     """
     if not are_asserts_enabled():
         return
-    if not isinstance(inputs, (list, tuple)):
+    if not _is_input_sequence(inputs):
         raise ValueError("inputs must be a list or tuple of arrays.")
     if not inputs:
         return
@@ -821,7 +681,7 @@ def assert_equal_shape_suffix(
     """
     if not are_asserts_enabled():
         return
-    if not isinstance(inputs, (list, tuple)):
+    if not _is_input_sequence(inputs):
         raise ValueError("inputs must be a list or tuple of arrays.")
     if not inputs or suffix_len == 0:
         return
@@ -869,7 +729,7 @@ def assert_equal_size(
     """
     if not are_asserts_enabled():
         return
-    if not isinstance(inputs, (list, tuple)):
+    if not _is_input_sequence(inputs):
         raise ValueError("inputs must be a list or tuple of arrays.")
     if not inputs:
         return
@@ -928,30 +788,7 @@ def assert_rank(
     """
     if not are_asserts_enabled():
         return
-    is_array_seq = _is_pytree_container(inputs)
-    is_scalar_multi_rank = (
-        isinstance(inputs, (list, tuple))
-        and not isinstance(inputs, NamedTuplePyTreeProtocol)
-        and len(inputs) > 0
-        and isinstance(expected_ranks, (list, tuple))
-        and all(
-            isinstance(
-                item,
-                (
-                    ArrayProtocol,
-                    VariableLeafProtocol,
-                    ShapeOnlyProtocol,
-                    TensorSpec,
-                    int,
-                    float,
-                    complex,
-                    bool,
-                ),
-            )
-            for item in inputs
-        )
-    )
-    if is_array_seq or is_scalar_multi_rank:
+    if _is_pytree_container(inputs):
         items_list = (
             list(inputs)
             if isinstance(inputs, (list, tuple)) and not isinstance(inputs, NamedTuplePyTreeProtocol)
@@ -1346,28 +1183,7 @@ def assert_type(
     """
     if not are_asserts_enabled():
         return
-    is_seq_of_scalars_or_arrays = (
-        isinstance(inputs, (list, tuple))
-        and not isinstance(inputs, NamedTuplePyTreeProtocol)
-        and len(inputs) > 0
-        and all(
-            isinstance(
-                item,
-                (
-                    ArrayProtocol,
-                    VariableLeafProtocol,
-                    ShapeOnlyProtocol,
-                    TensorSpec,
-                    int,
-                    float,
-                    complex,
-                    bool,
-                ),
-            )
-            for item in inputs
-        )
-    )
-    if _is_pytree_container(inputs) or is_seq_of_scalars_or_arrays:
+    if _is_pytree_container(inputs):
         items_list = (
             list(inputs)
             if isinstance(inputs, (list, tuple)) and not isinstance(inputs, NamedTuplePyTreeProtocol)
@@ -1415,7 +1231,6 @@ def assert_type(
 
 __all__ = [
     "SizeSpecElement",
-    "_raise_chex_error",
     "assert_axis_dimension",
     "assert_axis_dimension_comparator",
     "assert_axis_dimension_gt",

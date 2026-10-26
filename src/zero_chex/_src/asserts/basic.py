@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from zero_chex._src.asserts_internal import num_devices_available as _num_devices_available
 from zero_chex.assertions import (
     assert_equal,
     assert_exactly_one_is_none,
@@ -10,7 +11,6 @@ from zero_chex.assertions import (
     assert_not_both_none,
 )
 from zero_chex.devices import (
-    _num_devices_available,
     assert_devices_available,
     assert_gpu_available,
     assert_tpu_available,

@@ -221,6 +221,9 @@ def test_pytreedef_methods() -> None:
 
     from zero_chex._src import pytypes
 
-    assert pytypes.Device is Device
-    assert pytypes.PyTreeDef is PyTreeDef
-    assert pytypes.ArrayNumpy is ArrayNumpy
+    src_dev: pytypes.Device = pytypes.Device("tpu", 2)
+    assert src_dev.platform == "tpu" and src_dev.id == 2
+    src_def = pytypes.PyTreeDef(node_type="tuple", keys=(0,), children=(pytypes.PyTreeDef(),))
+    assert src_def.num_leaves == 1
+    src_arr: pytypes.ArrayNumpy = ZeroArray([1.0, 2.0])
+    assert src_arr.shape == (2,)

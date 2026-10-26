@@ -29,7 +29,19 @@ from zero_chex import (
     assert_size,
     assert_type,
 )
-from zero_chex.assertions import _dim_matches, _dtypes_match, _get_shape, _get_type, _normalize_dtype
+from zero_chex._src.asserts_internal import (
+    dtypes_match as _dtypes_match,
+)
+from zero_chex._src.asserts_internal import (
+    get_leaf_shape as _get_shape,
+)
+from zero_chex._src.asserts_internal import (
+    get_leaf_type as _get_type,
+)
+from zero_chex._src.asserts_internal import (
+    normalize_dtype_str as _normalize_dtype,
+)
+from zero_chex.assertions import _dim_matches
 from zero_chex.types import ZeroArray
 
 

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import dataclasses
 import math
 from collections.abc import Iterable, Iterator, Mapping, Sequence
-from typing import TYPE_CHECKING, Protocol, Union, runtime_checkable
+from typing import TYPE_CHECKING, ClassVar, Protocol, Union, runtime_checkable
 
 from ml_switcheroo_compiler.core.dtype import DType as CompilerDType
 from ml_switcheroo_compiler.core.tensor import Tensor as CompilerTensor
@@ -29,34 +30,6 @@ if TYPE_CHECKING:
     from builtins import ellipsis as EllipsisType
 else:
     EllipsisType = type(Ellipsis)
-
-_VALID_DTYPE_NAMES: frozenset[str] = frozenset(
-    {
-        "bool",
-        "bool_",
-        "int",
-        "int4",
-        "int8",
-        "int16",
-        "int32",
-        "int64",
-        "uint",
-        "uint4",
-        "uint8",
-        "uint16",
-        "uint32",
-        "uint64",
-        "float",
-        "float16",
-        "float32",
-        "float64",
-        "bfloat16",
-        "complex",
-        "complex64",
-        "complex128",
-        "str",
-    }
-)
 
 
 @runtime_checkable
@@ -275,6 +248,13 @@ class ShardingAttrProtocol(Protocol):
     def sharding(self) -> ShardingProtocol | None:
         """Return the sharding attribute of the object."""
         ...
+
+
+@runtime_checkable
+class DataclassInstanceProtocol(Protocol):
+    """Protocol representing a standard Python dataclass instance."""
+
+    __dataclass_fields__: ClassVar[dict[str, dataclasses.Field[PyTree]]]
 
 
 @runtime_checkable
@@ -651,8 +631,8 @@ class ZeroArray:
         Returns:
             True if shapes and all elements are equal.
         """
-        if isinstance(other, ArrayProtocol):
-            return self._shape == other.shape and self._flat == _extract_flat_scalars(other)
+        if isinstance(other, ArrayProtocol) and isinstance(other, ToListProtocol):
+            return self._shape == other.shape and self._flat == list(other.to_list())
         if isinstance(other, (int, float, complex, bool)) and self.size == 1:
             return self._flat[0] == other
         return False
@@ -677,6 +657,7 @@ class ZeroArray:
 DictKey = Union[str, int, tuple[Union[str, int], ...]]
 CustomNodeType = Union[
     type[MappableDataclassProtocol],
+    type[DataclassInstanceProtocol],
     type[NamedTuplePyTreeProtocol],
     type[StateMappingProtocol],
 ]
@@ -838,6 +819,7 @@ LeafValue = Union[
     ShardingAttrProtocol,
     DTypeAttrProtocol,
     OptStateLeafProtocol,
+    DataclassInstanceProtocol,
     ToListProtocol,
 ]
 
@@ -846,6 +828,7 @@ ArrayTree = Union[
     Iterable["ArrayTree"],
     Mapping[DictKey, "ArrayTree"],
     MappableDataclassProtocol,
+    DataclassInstanceProtocol,
     NamedTuplePyTreeProtocol,
     StateMappingProtocol,
 ]
@@ -854,6 +837,7 @@ ArrayDeviceTree = Union[
     Iterable["ArrayDeviceTree"],
     Mapping[DictKey, "ArrayDeviceTree"],
     MappableDataclassProtocol,
+    DataclassInstanceProtocol,
     NamedTuplePyTreeProtocol,
     StateMappingProtocol,
 ]
@@ -862,6 +846,7 @@ ArrayNumpyTree = Union[
     Iterable["ArrayNumpyTree"],
     Mapping[DictKey, "ArrayNumpyTree"],
     MappableDataclassProtocol,
+    DataclassInstanceProtocol,
     NamedTuplePyTreeProtocol,
     StateMappingProtocol,
 ]
@@ -870,56 +855,13 @@ PyTree = Union[
     Iterable["PyTree"],
     Mapping[DictKey, "PyTree"],
     MappableDataclassProtocol,
+    DataclassInstanceProtocol,
     NamedTuplePyTreeProtocol,
     StateMappingProtocol,
 ]
 
 TDimMatcher = Union[int, set[int], tuple[int, ...], str, EllipsisType, None]
 TShapeMatcher = Sequence[TDimMatcher]
-
-
-def _extract_flat_scalars(leaf: PyTree) -> list[Scalar]:
-    """Extract a flat list of scalar values from a leaf array, Variable, or scalar.
-
-    Args:
-        leaf: Array, Variable, or scalar leaf value.
-
-    Returns:
-        Flat list of numeric scalars.
-    """
-    if isinstance(leaf, VariableLeafProtocol):
-        return _extract_flat_scalars(leaf.value)
-    if isinstance(leaf, CompilerTensor):
-        if leaf.ndim == 0:
-            return [leaf.item()]
-        out: list[Scalar] = []
-        for sub_tensor in leaf:
-            out.extend(_extract_flat_scalars(sub_tensor))
-        return out
-    if isinstance(leaf, JaxNdarray):
-        raw_list = leaf.tolist()
-        flat_items, _ = _flatten_nested_data(raw_list) if isinstance(raw_list, list) else ([raw_list], ())
-        return flat_items
-    if isinstance(leaf, (int, float, complex, bool)):
-        return [leaf]
-    if isinstance(leaf, ToListProtocol):
-        return list(leaf.to_list())
-    return []
-
-
-def _has_valid_shape_tuple(val: ShapeOnlyProtocol) -> bool:
-    """Check whether a ShapeOnlyProtocol object has a valid shape tuple or TensorShape.
-
-    Args:
-        val: Candidate object exposing `.shape`.
-
-    Returns:
-        True if `val.shape` is a TensorShape or a tuple of non-negative integers.
-    """
-    raw_shape = val.shape
-    if isinstance(raw_shape, TensorShape):
-        return True
-    return all(not isinstance(d, bool) and d >= 0 for d in raw_shape)
 
 
 def is_scalar(val: PyTree) -> bool:
@@ -939,7 +881,7 @@ def is_scalar(val: PyTree) -> bool:
         return len(val.shape) == 0
     if isinstance(val, ArrayProtocol):
         return val.shape == ()
-    if isinstance(val, ShapeOnlyProtocol) and _has_valid_shape_tuple(val):
+    if isinstance(val, ShapeOnlyProtocol):
         raw_s = val.shape
         return (len(raw_s.dims) == 0) if isinstance(raw_s, TensorShape) else (raw_s == ())
     return False
@@ -984,6 +926,7 @@ __all__ = [
     "DType",
     "DTypeAttrProtocol",
     "DTypeLikeProtocol",
+    "DataclassInstanceProtocol",
     "Device",
     "DeviceProtocol",
     "DevicesMethodProtocol",
@@ -1015,10 +958,6 @@ __all__ = [
     "ToListProtocol",
     "VariableLeafProtocol",
     "ZeroArray",
-    "_VALID_DTYPE_NAMES",
-    "_extract_flat_scalars",
-    "_flatten_nested_data",
-    "_has_valid_shape_tuple",
     "is_array",
     "is_scalar",
 ]

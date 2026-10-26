@@ -5,15 +5,21 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 
-from zero_chex.assertions import _raise_chex_error
-from zero_chex.mocks import are_asserts_enabled
+from zero_chex._src.asserts_internal import (
+    are_asserts_enabled,
+)
+from zero_chex._src.asserts_internal import (
+    extract_flat_scalars as _extract_flat_scalars,
+)
+from zero_chex._src.asserts_internal import (
+    raise_chex_error as _raise_chex_error,
+)
 from zero_chex.types import (
     ArrayProtocol,
     Numeric,
     PyTree,
     Scalar,
     VariableLeafProtocol,
-    _extract_flat_scalars,
 )
 
 

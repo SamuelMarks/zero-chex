@@ -7,9 +7,6 @@ import re
 import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
-sys.path.insert(
-    0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "ml-ecosystem-snapshots", "src"))
-)
 
 from ml_ecosystem_snapshots import extract_snapshot
 from ml_ecosystem_snapshots.frameworks.chex import CANONICAL_CHEX_OPS

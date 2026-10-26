@@ -8,6 +8,33 @@ from collections.abc import Callable, Sequence
 
 from ml_switcheroo_ir import TensorSpec
 
+from zero_chex._src.asserts_internal import (
+    are_asserts_enabled,
+)
+from zero_chex._src.asserts_internal import (
+    dtypes_match as _dtypes_match,
+)
+from zero_chex._src.asserts_internal import (
+    extract_flat_scalars as _extract_flat_scalars,
+)
+from zero_chex._src.asserts_internal import (
+    format_tree_path as _format_path,
+)
+from zero_chex._src.asserts_internal import (
+    get_leaf_shape as _get_shape,
+)
+from zero_chex._src.asserts_internal import (
+    get_leaf_size as _get_size,
+)
+from zero_chex._src.asserts_internal import (
+    get_leaf_type as _get_type,
+)
+from zero_chex._src.asserts_internal import (
+    has_valid_shape_tuple as _has_valid_shape_tuple,
+)
+from zero_chex._src.asserts_internal import (
+    raise_chex_error as _raise_chex_error,
+)
 from zero_chex._src.tree_util import (
     TreeMapCallable,
     tree_flatten_with_path,
@@ -15,11 +42,8 @@ from zero_chex._src.tree_util import (
     tree_map,
     tree_structure,
 )
-from zero_chex.assertions import _dtypes_match, _get_shape, _get_size, _get_type, _raise_chex_error
-from zero_chex.mocks import are_asserts_enabled
 from zero_chex.types import (
     ArrayProtocol,
-    DictKey,
     DTypeAttrProtocol,
     LeafValue,
     PyTree,
@@ -28,23 +52,7 @@ from zero_chex.types import (
     SharedMemoryArray,
     SharedMemoryArrayMetadata,
     VariableLeafProtocol,
-    _extract_flat_scalars,
-    _has_valid_shape_tuple,
 )
-
-
-def _format_path(path: tuple[DictKey, ...]) -> str:
-    """Format a PyTree key path tuple into a readable string representation.
-
-    Args:
-        path: Tuple of string, integer, or tuple keys from root to leaf.
-
-    Returns:
-        Formatted path string (e.g., "root['a'][0]").
-    """
-    if not path:
-        return "root"
-    return "root" + "".join(f"[{p!r}]" for p in path)
 
 
 def _get_leaves(tree: PyTree) -> list[LeafValue]:
@@ -128,6 +136,40 @@ def _leaf_close(
     return True
 
 
+def _float64_ulp_diff(a: float, b: float) -> int:
+    """Compute the IEEE-754 double-precision (float64) ULP distance between two real floats.
+
+    Args:
+        a: First floating-point number.
+        b: Second floating-point number.
+
+    Returns:
+        Non-negative integer ULP distance in 64-bit IEEE-754 representation.
+    """
+    if a == b:
+        return 0
+    bits_a64 = int(struct.unpack("!Q", struct.pack("!d", a))[0])
+    bits_b64 = int(struct.unpack("!Q", struct.pack("!d", b))[0])
+    ord_a64 = -(bits_a64 & 0x7FFFFFFFFFFFFFFF) if (bits_a64 & 0x8000000000000000) else bits_a64
+    ord_b64 = -(bits_b64 & 0x7FFFFFFFFFFFFFFF) if (bits_b64 & 0x8000000000000000) else bits_b64
+    return abs(ord_a64 - ord_b64)
+
+
+def _pack_float32_bits(val: float) -> tuple[bool, int]:
+    """Pack a float into IEEE-754 float32 bits, clamping overflow to float32 infinity bits.
+
+    Args:
+        val: Float value to pack.
+
+    Returns:
+        Pair of (overflowed_float32, packed_uint32_bits).
+    """
+    try:
+        return False, int(struct.unpack("!I", struct.pack("!f", val))[0])
+    except OverflowError:
+        return True, (0xFF800000 if val < 0.0 else 0x7F800000)
+
+
 def _float32_ulp_diff(a: float, b: float) -> int:
     """Compute the IEEE-754 single-precision (float32) ULP distance between two real floats.
 
@@ -140,19 +182,29 @@ def _float32_ulp_diff(a: float, b: float) -> int:
     """
     if a == b:
         return 0
-    try:
-        bits_a = int(struct.unpack("!I", struct.pack("!f", a))[0])
-        bits_b = int(struct.unpack("!I", struct.pack("!f", b))[0])
-    except OverflowError:
-        bits_a64 = int(struct.unpack("!Q", struct.pack("!d", a))[0])
-        bits_b64 = int(struct.unpack("!Q", struct.pack("!d", b))[0])
-        ord_a64 = -(bits_a64 & 0x7FFFFFFFFFFFFFFF) if (bits_a64 & 0x8000000000000000) else bits_a64
-        ord_b64 = -(bits_b64 & 0x7FFFFFFFFFFFFFFF) if (bits_b64 & 0x8000000000000000) else bits_b64
-        return abs(ord_a64 - ord_b64)
-
+    ovf_a, bits_a = _pack_float32_bits(a)
+    ovf_b, bits_b = _pack_float32_bits(b)
+    if ovf_a and ovf_b:
+        return _float64_ulp_diff(a, b)
     ord_a = -(bits_a & 0x7FFFFFFF) if (bits_a & 0x80000000) else bits_a
     ord_b = -(bits_b & 0x7FFFFFFF) if (bits_b & 0x80000000) else bits_b
     return abs(ord_a - ord_b)
+
+
+def _is_explicit_64bit_leaf(leaf: LeafValue) -> bool:
+    """Check whether leaf is an array or TensorSpec with an explicit 64-bit float/complex dtype.
+
+    Args:
+        leaf: Leaf value to inspect.
+
+    Returns:
+        True if leaf has explicit float64 or complex128 dtype.
+    """
+    inner = leaf.value if isinstance(leaf, VariableLeafProtocol) else leaf
+    if isinstance(inner, (ArrayProtocol, DTypeAttrProtocol, TensorSpec)):
+        dt_str = str(_get_type(inner)).lower()
+        return "float64" in dt_str or "complex128" in dt_str
+    return False
 
 
 def _leaf_close_ulp(l1: LeafValue, l2: LeafValue, maxulp: int = 1, equal_nan: bool = False) -> bool:
@@ -173,6 +225,7 @@ def _leaf_close_ulp(l1: LeafValue, l2: LeafValue, maxulp: int = 1, equal_nan: bo
     s2 = _extract_flat_scalars(l2)
     if not s1 and not s2:
         return bool(l1 == l2)
+    ulp_fn = _float64_ulp_diff if (_is_explicit_64bit_leaf(l1) or _is_explicit_64bit_leaf(l2)) else _float32_ulp_diff
     for a, b in zip(s1, s2):
         if _scalar_is_nan(a) or _scalar_is_nan(b):
             if equal_nan and _scalar_is_nan(a) and _scalar_is_nan(b):
@@ -185,10 +238,10 @@ def _leaf_close_ulp(l1: LeafValue, l2: LeafValue, maxulp: int = 1, equal_nan: bo
         if isinstance(a, complex) or isinstance(b, complex):
             ca = complex(a)
             cb = complex(b)
-            if _float32_ulp_diff(ca.real, cb.real) > maxulp or _float32_ulp_diff(ca.imag, cb.imag) > maxulp:
+            if ulp_fn(ca.real, cb.real) > maxulp or ulp_fn(ca.imag, cb.imag) > maxulp:
                 return False
         else:
-            if _float32_ulp_diff(float(a), float(b)) > maxulp:
+            if ulp_fn(float(a), float(b)) > maxulp:
                 return False
     return True
 
@@ -226,21 +279,33 @@ def _leaf_equal(l1: LeafValue, l2: LeafValue, strict: bool = False, equal_nan: b
     return bool(l1 == l2)
 
 
-def _both_leaves_identical_nans(l1: LeafValue, l2: LeafValue) -> bool:
-    """Check whether two scalar leaves are both NaN.
+def _both_leaves_identical_nans(
+    l1: LeafValue,
+    l2: LeafValue,
+    equality_comparator: Callable[[LeafValue, LeafValue], bool] | None = None,
+) -> bool:
+    """Check whether two scalar, array, or Variable leaves have matching NaNs (and equal non-NaN elements).
 
     Args:
         l1: First leaf value.
         l2: Second leaf value.
+        equality_comparator: Optional comparator for non-NaN elements in mixed arrays.
 
     Returns:
-        True if both leaves are 0-D scalars whose values are NaN.
+        True if both leaves have matching shapes, at least one matching NaN pair, and equal non-NaN elements.
     """
-    return (
-        isinstance(l1, (int, float, complex, bool))
-        and isinstance(l2, (int, float, complex, bool))
-        and _scalar_is_nan(l1)
-        and _scalar_is_nan(l2)
+    s1 = _extract_flat_scalars(l1)
+    s2 = _extract_flat_scalars(l2)
+    if (
+        _get_shape(l1) != _get_shape(l2)
+        or not s1
+        or not any(_scalar_is_nan(a) and _scalar_is_nan(b) for a, b in zip(s1, s2))
+    ):
+        return False
+    return all(
+        (_scalar_is_nan(a) and _scalar_is_nan(b))
+        or (equality_comparator is not None and bool(equality_comparator(a, b)))
+        for a, b in zip(s1, s2)
     )
 
 
@@ -566,7 +631,7 @@ def assert_trees_all_equal_comparator(
     for other_tree in trees[1:]:
         other_leaves = _get_leaves(other_tree)
         for (path, l1), l2 in zip(path_leaves0, other_leaves):
-            if ignore_nans and _both_leaves_identical_nans(l1, l2):
+            if ignore_nans and _both_leaves_identical_nans(l1, l2, equality_comparator):
                 continue
             if not equality_comparator(l1, l2):
                 _raise_chex_error(
@@ -850,7 +915,6 @@ def assert_trees_all_equal_shapes_and_dtypes(
 
 __all__ = [
     "TreeMapCallable",
-    "_extract_flat_scalars",
     "assert_tree_all_finite",
     "assert_tree_has_only_ndarrays",
     "assert_tree_no_nans",

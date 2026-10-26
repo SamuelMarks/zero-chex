@@ -41,6 +41,7 @@ from zero_chex import (
     assert_trees_all_equal_structs,
     dataclass,
 )
+from zero_chex._src.asserts_internal import format_tree_path
 from zero_chex._src.tree_util import (
     _is_leaf_value,
     tree_all,
@@ -55,7 +56,6 @@ from zero_chex.dataclasses import MappableDataclassMixin
 from zero_chex.devices import _check_sharding
 from zero_chex.trees import (
     _float32_ulp_diff,
-    _format_path,
     _leaf_close,
     _leaf_close_ulp,
     _leaf_equal,
@@ -73,8 +73,8 @@ class _EmptyDevicesHolder:
 
 def test_tree_util_functions() -> None:
     """Test tree_flatten, tree_unflatten, tree_map, tree_all, and tree_structure."""
-    assert _format_path(()) == "root"
-    assert _format_path(("a", 0)) == "root['a'][0]"
+    assert format_tree_path(()) == "root"
+    assert format_tree_path(("a", 0)) == "a/0"
 
     tree = {"a": [1, 2], "b": (3, 4)}
     leaves_with_path, treedef = tree_flatten_with_path(tree)
@@ -336,6 +336,11 @@ def test_multi_tree_assertions() -> None:
     assert _float32_ulp_diff(1e100, 1e100) == 0
     assert _float32_ulp_diff(1e100, 1e100 * (1.0 + 1e-15)) > 0
     assert _float32_ulp_diff(-1e100, -1e100 * (1.0 + 1e-15)) > 0
+    assert_trees_all_close_ulp(
+        ZeroArray([1.0, 2.0], shape=(2,), dtype="float64"),
+        ZeroArray([1.0, 2.0], shape=(2,), dtype="float64"),
+        maxulp=1,
+    )
     assert _leaf_close_ulp("abc", "abc")
     assert not _leaf_close_ulp(t1["a"], t_diff_shape["a"])
     assert not _leaf_close_ulp(float("nan"), 1.0)

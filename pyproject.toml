@@ -54,9 +54,6 @@ convention = "google"
 python_version = "3.9"
 mypy_path = [
     "src",
-    "../ml-switcheroo-ir/src",
-    "../ml-switcheroo-compiler/src",
-    "../ml-ecosystem-snapshots/src",
     "../zero-jax/src",
     "../zero-flax/src",
     "../zero-grain/src",
@@ -85,9 +82,14 @@ enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
 disable_error_code = ["override"]
 
 [[tool.mypy.overrides]]
-module = ["pytest", "_pytest.*", "ml_ecosystem_snapshots", "ml_ecosystem_snapshots.*"]
+module = ["pytest", "ml_ecosystem_snapshots", "ml_ecosystem_snapshots.*", "ml_switcheroo_compiler", "ml_switcheroo_compiler.*"]
 ignore_missing_imports = true
 follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+module = ["ml_switcheroo_ir.*"]
+follow_imports = "silent"
+disallow_any_explicit = false
 
 [[tool.mypy.overrides]]
 module = ["tests.conftest"]
@@ -125,9 +127,6 @@ exclude = ["setup.py", "docs", "build", "dist"]
 [tool.pytest.ini_options]
 pythonpath = [
     "src",
-    "../ml-switcheroo-ir/src",
-    "../ml-switcheroo-compiler/src",
-    "../ml-ecosystem-snapshots/src",
     "../zero-jax/src",
     "../zero-flax/src",
     "../zero-grain/src",

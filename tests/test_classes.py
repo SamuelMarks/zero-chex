@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import pytest
+import zero_jax.numpy as jnp
 
 from zero_chex import (
     ChexVariantType,
+    Device,
     Dimensions,
     TestCase,
     all_variants,
     restrict_backends,
     variants,
 )
+from zero_chex.types import ZeroArray
 from zero_chex.utils import _DimLetterDescriptor
 from zero_chex.variants import VariantDecorator, _select_variant_types
 
@@ -148,11 +151,11 @@ def test_variants_and_testcase() -> None:
         def run_jit(self) -> int:
             """Run with_jit variant."""
             fn = self.variant(_inc1)
-            fn_kw = self.variant(static_argnums=0)(_inc2)
+            fn_kw = self.variant(static_argnums=0, static_argnames="extra")(_inc2)
             assert self._active_variant is not None
             assert self._active_variant.type == ChexVariantType.WITH_JIT
-            res = fn(1) + fn_kw(1)
-            assert self._active_variant.call_count == 2
+            res = fn(1) + fn(1) + fn_kw(1) - fn(1)
+            assert self._active_variant.call_count == 4
             return res
 
         @variants(without_jit=True)
@@ -165,11 +168,33 @@ def test_variants_and_testcase() -> None:
 
         @variants(with_device=True)
         def run_with_device(self) -> int:
-            """Run with_device variant."""
+            """Run with_device variant with ZeroArray and JaxNdarray device placement."""
             assert self._active_variant is not None
             assert self._active_variant.type == ChexVariantType.WITH_DEVICE
-            fn = self.variant(_inc1)
-            return fn(1)
+
+            def _dev_fn(arr: ZeroArray, j_arr: jnp.ndarray, scale: int = 1) -> int:
+                """Verify device placement and return scalar sum.
+
+                Args:
+                    arr: Placed ZeroArray argument.
+                    j_arr: Placed JaxNdarray argument.
+                    scale: Integer scale factor.
+
+                Returns:
+                    Integer sum of first element and scale.
+                """
+                assert arr.devices() == (Device("cpu", 0),)
+                assert j_arr.shape == (1,)
+                first_elem = arr.to_list()[0]
+                assert isinstance(first_elem, (int, float))
+                return int(first_elem) + scale
+
+            fn = self.variant(_dev_fn, device=Device("cpu", 0))
+            fn_str = self.variant(_dev_fn, device="cpu:0")
+            fn_backend = self.variant(_dev_fn, backend="cpu")
+            _ = fn_str(ZeroArray([1.0]), jnp.array([1.0]), scale=1)
+            _ = fn_backend(ZeroArray([1.0]), jnp.array([1.0]), scale=1)
+            return fn(ZeroArray([1.0]), jnp.array([1.0]), scale=1)
 
         @variants(without_device=True)
         def run_without_device(self) -> int:
@@ -183,7 +208,8 @@ def test_variants_and_testcase() -> None:
             """Run with_pmap variant."""
             assert self._active_variant is not None
             assert self._active_variant.type == ChexVariantType.WITH_PMAP
-            fn = self.variant(_inc1)
+            fn = self.variant(_inc1, axis_name="batch")
+            _ = fn(3)
             return fn(3)
 
         @variants()
@@ -324,4 +350,4 @@ def test_variants_and_testcase() -> None:
     with pytest.raises(ValueError, match="Unknown variant argument"):
         check_variant_arguments(invalid_flag=True)
     with pytest.raises(TypeError, match="must be a bool"):
-        check_variant_arguments(with_jit=1)
+        variants(with_jit=1)

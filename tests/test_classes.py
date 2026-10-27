@@ -351,3 +351,46 @@ def test_variants_and_testcase() -> None:
         check_variant_arguments(invalid_flag=True)
     with pytest.raises(TypeError, match="must be a bool"):
         variants(with_jit=1)
+
+    # Cross-ecosystem @variants with nnx.Module, nnx.State, and zero_optax.OptState
+    import zero_flax.nnx as nnx
+    import zero_optax
+
+    class EcosystemVariantTest(TestCase):
+        """TestCase verifying @variants with Flax nnx.Module/State and Optax OptState."""
+
+        @variants(with_jit=True, without_jit=True, with_pmap=True, with_device=True)
+        def run_ecosystem(self) -> jnp.ndarray:
+            """Execute nnx.Linear module, State transfer, and Optax update across all 4 variants."""
+            lin = nnx.Linear(2, 2, rngs=nnx.Rngs(0))
+            _, state = nnx.split(lin)
+            opt = zero_optax.adam(1e-2)
+            params = {"w": jnp.array([1.0, 2.0])}
+            opt_state = opt.init(params)
+
+            def _step(
+                x: jnp.ndarray,
+                st: nnx.State,
+                ost: zero_optax.OptState,
+            ) -> tuple[jnp.ndarray, nnx.State, zero_optax.OptState]:
+                """Run module forward and return state and optimizer state.
+
+                Args:
+                    x: Input JaxNdarray.
+                    st: Flax nnx.State.
+                    ost: Optax OptState.
+
+                Returns:
+                    Tuple of (output, state, opt_state).
+                """
+                return lin(x), st, ost
+
+            wrapped_mod = self.variant(lin)
+            _ = wrapped_mod(jnp.array([[1.0, 2.0]]))
+            wrapped_step = self.variant(_step)
+            out, _, _ = wrapped_step(jnp.array([[1.0, 2.0]]), state, opt_state)
+            return out
+
+    eco_case = EcosystemVariantTest()
+    eco_out = eco_case.run_ecosystem()
+    assert eco_out.shape == (1, 2)

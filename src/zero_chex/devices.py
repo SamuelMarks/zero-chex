@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from ml_switcheroo_compiler.core.device import Device as CompilerDevice
+
 from zero_chex._src.asserts_internal import (
     are_asserts_enabled,
 )
@@ -18,14 +20,129 @@ from zero_chex._src.asserts_internal import (
 )
 from zero_chex._src.tree_util import tree_leaves
 from zero_chex.types import (
+    CompilerTensor,
+    Device,
     DeviceProtocol,
     DevicesMethodProtocol,
+    FlaxVariable,
+    GlobalArraySharding,
+    JaxNdarray,
     LeafValue,
+    NamedSharding,
+    PartitionSpec,
     PyTree,
     Scalar,
+    SerializedArray,
     ShardingAttrProtocol,
     ShardingProtocol,
+    SingleDeviceSharding,
+    VariableLeafProtocol,
 )
+
+
+def _coerce_device_item(
+    item: DeviceProtocol | CompilerDevice | str | int | float | bool | None,
+) -> DeviceProtocol:
+    """Convert a device object or string identifier (e.g. 'cpu:0') into a DeviceProtocol.
+
+    Args:
+        item: DeviceProtocol, CompilerDevice, or string device identifier.
+
+    Returns:
+        Normalized DeviceProtocol instance.
+    """
+    if isinstance(item, DeviceProtocol):
+        return Device(item.platform.lower(), item.id)
+    if isinstance(item, CompilerDevice):
+        return Device(str(item.device_type).split(".")[-1].lower(), item.index or 0)
+    raw = str(item).strip().lower()
+    if ":" in raw:
+        plat, idx_str = raw.split(":", 1)
+        return Device(plat, int(idx_str))
+    return Device(raw if raw in ("cpu", "gpu", "tpu") else "cpu", 0)
+
+
+def _extract_sharding_obj(
+    leaf: LeafValue,
+) -> ShardingProtocol | NamedSharding | PartitionSpec | GlobalArraySharding | SingleDeviceSharding | None:
+    """Extract the active sharding descriptor from a leaf, Variable metadata, or inner array.
+
+    Args:
+        leaf: PyTree leaf to inspect.
+
+    Returns:
+        Sharding descriptor or None if unsharded.
+    """
+    if isinstance(leaf, FlaxVariable):
+        meta_sharding = leaf.metadata.get("sharding")
+        if isinstance(meta_sharding, Sequence) and not isinstance(meta_sharding, str) and len(meta_sharding) > 0:
+            return PartitionSpec(*[str(axis) for axis in meta_sharding])
+        inner_val = leaf.value
+        if isinstance(
+            inner_val,
+            (JaxNdarray, ShardingAttrProtocol, FlaxVariable, VariableLeafProtocol),
+        ):
+            return _extract_sharding_obj(inner_val)
+        return None
+    if isinstance(leaf, JaxNdarray):
+        raw_s = leaf._sharding
+        if isinstance(
+            raw_s,
+            (NamedSharding, PartitionSpec, GlobalArraySharding, SingleDeviceSharding, ShardingProtocol),
+        ):
+            return raw_s
+        return None
+    if isinstance(leaf, ShardingAttrProtocol):
+        return leaf.sharding
+    return None
+
+
+def _extract_sharding_device_set(leaf: LeafValue) -> frozenset[DeviceProtocol] | None:
+    """Extract the frozenset of DeviceProtocol instances from a sharded leaf if available.
+
+    Args:
+        leaf: PyTree leaf to inspect.
+
+    Returns:
+        Frozenset of DeviceProtocol instances, or None if not device-set based.
+    """
+    sharding = _extract_sharding_obj(leaf)
+    if isinstance(sharding, (NamedSharding, ShardingProtocol)):
+        return frozenset(_coerce_device_item(d) for d in sharding.device_set)
+    return None
+
+
+def _extract_leaf_devices(leaf: LeafValue) -> Sequence[DeviceProtocol] | None:
+    """Extract the sequence of devices on which a leaf resides.
+
+    Args:
+        leaf: PyTree leaf to inspect.
+
+    Returns:
+        Sequence of DeviceProtocol instances, or None if leaf is not device-placed.
+    """
+    if isinstance(leaf, VariableLeafProtocol):
+        inner = leaf.value
+        if isinstance(
+            inner,
+            (DevicesMethodProtocol, JaxNdarray, CompilerTensor, SerializedArray, VariableLeafProtocol),
+        ):
+            return _extract_leaf_devices(inner)
+        return None
+    if isinstance(leaf, DevicesMethodProtocol):
+        return leaf.devices()
+    if isinstance(leaf, JaxNdarray):
+        sharding = leaf.sharding
+        if isinstance(sharding, (SingleDeviceSharding, NamedSharding, ShardingProtocol)):
+            return tuple(_coerce_device_item(d) for d in sharding.device_set)
+        t_dev = leaf._tensor.device
+        return (Device(str(t_dev.device_type).split(".")[-1].lower(), t_dev.index or 0),)
+    if isinstance(leaf, CompilerTensor):
+        c_dev = leaf.device
+        return (Device(str(c_dev.device_type).split(".")[-1].lower(), c_dev.index or 0),)
+    if isinstance(leaf, SerializedArray):
+        return (Device("cpu", 0),)
+    return None
 
 
 def assert_devices_available(
@@ -180,13 +297,15 @@ def _check_sharding(leaf: LeafValue) -> bool:
         leaf: The PyTree leaf to inspect.
 
     Returns:
-        True if leaf has a non-None ShardingProtocol with a non-empty device_set.
+        True if leaf has a non-None NamedSharding, PartitionSpec, GlobalArraySharding, or ShardingProtocol.
     """
-    if not isinstance(leaf, ShardingAttrProtocol):
+    sharding = _extract_sharding_obj(leaf)
+    if sharding is None or isinstance(sharding, SingleDeviceSharding):
         return False
-    sharding = leaf.sharding
-    if sharding is None or not isinstance(sharding, ShardingProtocol):
-        return False
+    if isinstance(sharding, PartitionSpec):
+        return len(sharding.axes) > 0 and any(p is not None for p in sharding.axes)
+    if isinstance(sharding, GlobalArraySharding):
+        return True
     return len(sharding.device_set) > 0
 
 
@@ -218,7 +337,8 @@ def assert_tree_is_on_device(
         return
     platforms = (platform,) if isinstance(platform, str) else tuple(platform)
     for leaf in tree_leaves(tree):
-        if not isinstance(leaf, DevicesMethodProtocol):
+        devs = _extract_leaf_devices(leaf)
+        if devs is None:
             _raise_chex_error(
                 f"Leaf {leaf!r} is not placed on any device.",
                 custom_message=custom_message,
@@ -226,7 +346,6 @@ def assert_tree_is_on_device(
                 include_default_message=include_default_message,
                 exception_type=exception_type,
             )
-        devs = leaf.devices()
         if not devs:
             _raise_chex_error(
                 f"Leaf {leaf!r} has an empty devices() tuple.",
@@ -288,8 +407,11 @@ def assert_tree_is_on_host(
                 include_default_message=include_default_message,
                 exception_type=exception_type,
             )
-        if isinstance(leaf, DevicesMethodProtocol):
-            devs = leaf.devices()
+        inner = leaf.value if isinstance(leaf, VariableLeafProtocol) else leaf
+        if isinstance(inner, SerializedArray):
+            continue
+        devs = _extract_leaf_devices(leaf)
+        if devs is not None:
             if not allow_cpu_device and devs and all(d.platform == "cpu" for d in devs):
                 _raise_chex_error(
                     f"CPU device array {leaf!r} is not allowed when allow_cpu_device=False.",
@@ -341,20 +463,18 @@ def assert_tree_is_sharded(
                 include_default_message=include_default_message,
                 exception_type=exception_type,
             )
-        if (
-            devices is not None
-            and isinstance(leaf, ShardingAttrProtocol)
-            and isinstance(leaf.sharding, ShardingProtocol)
-        ):
-            expected_set = frozenset(devices)
-            if leaf.sharding.device_set != expected_set:
-                _raise_chex_error(
-                    f"Leaf sharded across {leaf.sharding.device_set!r}, expected {expected_set!r}.",
-                    custom_message=custom_message,
-                    custom_message_format_vars=custom_message_format_vars,
-                    include_default_message=include_default_message,
-                    exception_type=exception_type,
-                )
+        if devices is not None:
+            actual_set = _extract_sharding_device_set(leaf)
+            if actual_set is not None:
+                expected_set = frozenset(_coerce_device_item(d) for d in devices)
+                if actual_set != expected_set:
+                    _raise_chex_error(
+                        f"Leaf sharded across {actual_set!r}, expected {expected_set!r}.",
+                        custom_message=custom_message,
+                        custom_message_format_vars=custom_message_format_vars,
+                        include_default_message=include_default_message,
+                        exception_type=exception_type,
+                    )
 
 
 __all__ = [

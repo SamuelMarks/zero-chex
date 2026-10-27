@@ -77,6 +77,7 @@ from zero_chex.trees import (
     assert_trees_all_equal_shapes_and_dtypes,
     assert_trees_all_equal_sizes,
     assert_trees_all_equal_structs,
+    assert_trees_all_finite,
 )
 from zero_chex.types import (
     Array,
@@ -181,6 +182,7 @@ __all__ = [
     "assert_trees_all_equal_shapes_and_dtypes",
     "assert_trees_all_equal_sizes",
     "assert_trees_all_equal_structs",
+    "assert_trees_all_finite",
     "assert_type",
     "block_until_chexify_assertions_complete",
     "chexify",

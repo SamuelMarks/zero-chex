@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import os
 import re
-import subprocess
 
 
 def get_color(pct: float) -> str:
@@ -44,79 +42,39 @@ def format_cov(cov: float) -> str:
     return f"{cov:.1f}"
 
 
-def get_test_coverage() -> float:
-    """Read test coverage percentage from coverage.json if available.
-
-    Returns:
-        Coverage percentage as a float.
-    """
-    try:
-        subprocess.run(["coverage", "json", "-o", "coverage.json"], check=False)
-        with open("coverage.json", encoding="utf-8") as file_handle:
-            data = json.load(file_handle)
-            totals = data.get("totals", {})
-            pct = totals.get("percent_covered", 100.0)
-            return float(pct)
-    except (OSError, ValueError, KeyError):
-        return 100.0
-
-
-def get_doc_coverage() -> float:
-    """Compute documentation coverage percentage via interrogate.
-
-    Returns:
-        Documentation coverage percentage as a float.
-    """
-    try:
-        subprocess.run(
-            ["interrogate", "--generate-badge", "."],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        result = subprocess.run(
-            ["interrogate", "src"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        match = re.search(r"actual: (\d+\.?\d*)%", result.stdout)
-        if match:
-            return float(match.group(1))
-        match_err = re.search(r"actual: (\d+\.?\d*)%", result.stderr)
-        if match_err:
-            return float(match_err.group(1))
-        return 100.0
-    except (OSError, ValueError):
-        return 100.0
-
-
-def get_api_compliance() -> float:
+def get_api_compliance(todo_path: str = "CHEX_TODO.md") -> float:
     """Read API compliance percentage from CHEX_TODO.md.
+
+    Args:
+        todo_path: Path to CHEX_TODO.md.
 
     Returns:
         Compliance percentage as a float.
     """
-    try:
-        todo_files = [f for f in os.listdir(".") if f.endswith("_TODO.md")]
-        if not todo_files:
-            return 100.0
-        with open(todo_files[0], encoding="utf-8") as file_handle:
+    if os.path.exists(todo_path):
+        with open(todo_path, encoding="utf-8") as file_handle:
             for line in file_handle:
                 if line.startswith("Overall Compliance:"):
                     return float(line.split(":")[1].strip().replace("%", ""))
-    except (OSError, ValueError, IndexError):
-        pass
     return 100.0
 
 
-def update_readme() -> None:
-    """Update coverage and compliance shield badges in README.md."""
-    if not os.path.exists("README.md"):
-        return
+def update_readme(
+    readme_path: str = "README.md",
+    test_cov: float = 100.0,
+    doc_cov: float = 100.0,
+    todo_path: str = "CHEX_TODO.md",
+) -> None:
+    """Update coverage and compliance shield badges in README.md.
 
-    test_cov = get_test_coverage()
-    doc_cov = get_doc_coverage()
+    Args:
+        readme_path: Path to README.md.
+        test_cov: Test coverage percentage.
+        doc_cov: Documentation coverage percentage.
+        todo_path: Path to CHEX_TODO.md for API compliance percentage.
+    """
+    if not os.path.exists(readme_path):
+        return
 
     test_str = format_cov(test_cov)
     doc_str = format_cov(doc_cov)
@@ -124,7 +82,7 @@ def update_readme() -> None:
     test_color = get_color(test_cov)
     doc_color = get_color(doc_cov)
 
-    with open("README.md", encoding="utf-8") as file_handle:
+    with open(readme_path, encoding="utf-8") as file_handle:
         content = file_handle.read()
 
     test_re = re.compile(
@@ -143,20 +101,19 @@ def update_readme() -> None:
         content,
     )
 
-    api_comp = get_api_compliance()
+    api_comp = get_api_compliance(todo_path)
     api_str = format_cov(api_comp)
     api_color = get_color(api_comp)
 
     api_re = re.compile(
         r"\[?\!\[API Compliance\]\(https://img\.shields\.io/badge/(?:[aA]pi_)?(?:[cC]ompliance)-[0-9.]+%25-[a-z]+\.svg\)\]?(?:\(#\))?"
     )
-    if api_re.search(content):
-        content = api_re.sub(
-            f"[![API Compliance](https://img.shields.io/badge/api_compliance-{api_str}%25-{api_color}.svg)](#)",
-            content,
-        )
+    content = api_re.sub(
+        f"[![API Compliance](https://img.shields.io/badge/api_compliance-{api_str}%25-{api_color}.svg)](#)",
+        content,
+    )
 
-    with open("README.md", "w", encoding="utf-8") as file_handle:
+    with open(readme_path, "w", encoding="utf-8") as file_handle:
         file_handle.write(content)
 
 

@@ -2,17 +2,26 @@
 
 from __future__ import annotations
 
+import builtins
 import dataclasses
 import math
 from collections.abc import Iterable, Iterator, Mapping, Sequence
-from typing import TYPE_CHECKING, ClassVar, Protocol, Union, runtime_checkable
+from typing import ClassVar, Protocol, Union, runtime_checkable
 
+import zero_jax.numpy as jnp
 from ml_switcheroo_compiler.core.dtype import DType as CompilerDType
 from ml_switcheroo_compiler.core.tensor import Tensor as CompilerTensor
-from ml_switcheroo_ir import DType, LogicalNode, SymInt, SymNode, TensorShape, TensorSpec
+from ml_switcheroo_ir import DType, LogicalNode, PartitionSpec, SymInt, SymNode, TensorShape, TensorSpec
+from zero_flax.core import FrozenDict
+from zero_flax.nnx import OptState as FlaxOptState
+from zero_flax.nnx import OptVariable as FlaxOptVariable
+from zero_flax.nnx import State as FlaxState
 from zero_flax.nnx.variables import Variable as FlaxVariable
+from zero_grain.record import Record, RecordMetadata
 from zero_grain.shared_memory_array import SharedMemoryArray, SharedMemoryArrayMetadata
 from zero_jax.numpy import ndarray as JaxNdarray
+from zero_jax.sharding import NamedSharding, SingleDeviceSharding
+from zero_orbax.core import GlobalArraySharding, SerializedArray
 
 
 @runtime_checkable
@@ -26,10 +35,8 @@ class TaylorScalarProtocol(Protocol):
 
 Scalar = Union[int, float, complex, bool]
 NestedScalarSequence = Sequence[Union[Scalar, "NestedScalarSequence"]]
-if TYPE_CHECKING:
-    from builtins import ellipsis as EllipsisType
-else:
-    EllipsisType = type(Ellipsis)
+builtins.ellipsis = type(Ellipsis)
+from builtins import ellipsis as EllipsisType  # noqa: E402
 
 
 @runtime_checkable
@@ -368,13 +375,36 @@ class PmapSharding:
         return self._is_fully_replicated
 
 
-def _flatten_nested_data(
-    data: NestedScalarSequence | Scalar,
-) -> tuple[list[Scalar], tuple[int, ...]]:
-    """Recursively flatten a scalar or nested sequence of scalars and infer its shape.
+def _unflatten_to_nested(
+    flat: Sequence[Scalar],
+    shape: tuple[int, ...],
+) -> NestedScalarSequence | Scalar:
+    """Reconstruct a nested Python list (or scalar if 0-D) from flat elements and shape.
 
     Args:
-        data: A scalar or nested sequence of scalars.
+        flat: Flat sequence of scalar elements.
+        shape: Target shape tuple.
+
+    Returns:
+        Scalar if shape is empty, or nested list matching shape.
+    """
+    if not shape:
+        return flat[0] if flat else 0.0
+    if len(shape) == 1:
+        return list(flat[: shape[0]])
+    stride = math.prod(shape[1:])
+    if stride == 0:
+        return [_unflatten_to_nested((), shape[1:]) for _ in range(shape[0])]
+    return [_unflatten_to_nested(flat[i * stride : (i + 1) * stride], shape[1:]) for i in range(shape[0])]
+
+
+def _flatten_nested_data(
+    data: NestedScalarSequence | Scalar | JaxNdarray | CompilerTensor | SerializedArray | ArrayProtocol,
+) -> tuple[list[Scalar], tuple[int, ...]]:
+    """Recursively flatten a scalar, array, or nested sequence of scalars and infer its shape.
+
+    Args:
+        data: A scalar, ecosystem array, or nested sequence of scalars.
 
     Returns:
         A tuple of (flat_scalar_list, inferred_shape_tuple).
@@ -382,9 +412,25 @@ def _flatten_nested_data(
     Raises:
         ValueError: If nested sequences have ragged (inconsistent) sub-shapes.
     """
+    if isinstance(data, (JaxNdarray, SerializedArray)):
+        nested = data.tolist()
+        if isinstance(nested, (int, float, complex, bool)):
+            return [nested], tuple(int(d) for d in data.shape)
+        if isinstance(nested, Sequence):
+            flat_arr, _ = _flatten_nested_data(nested)
+            return flat_arr, tuple(int(d) for d in data.shape)
+    if isinstance(data, CompilerTensor):
+        raw_arr = data.__array__().tolist()
+        if isinstance(raw_arr, (int, float, complex, bool)):
+            return [raw_arr], tuple(int(d) for d in data.shape)
+        if isinstance(raw_arr, Sequence):
+            flat_ct, _ = _flatten_nested_data(raw_arr)
+            return flat_ct, tuple(int(d) for d in data.shape)
+    if isinstance(data, ArrayProtocol) and isinstance(data, ToListProtocol):
+        return list(data.to_list()), tuple(int(d) for d in data.shape)
     if isinstance(data, (int, float, complex, bool)):
         return [data], ()
-    if not data:
+    if not isinstance(data, Sequence) or not data:
         return [], (0,)
     flat_items: list[Scalar] = []
     sub_shapes: list[tuple[int, ...]] = []
@@ -403,18 +449,18 @@ class ZeroArray:
 
     def __init__(
         self,
-        data: NestedScalarSequence | Scalar,
+        data: NestedScalarSequence | Scalar | JaxNdarray | CompilerTensor | SerializedArray | ArrayProtocol,
         shape: Sequence[int] | TensorShape | None = None,
-        dtype: DType | DTypeLikeProtocol | str | type[Scalar] = DType.float32,
+        dtype: DType | CompilerDType | DTypeLikeProtocol | str | type[Scalar] | None = None,
         device: DeviceProtocol | Sequence[DeviceProtocol] | None = None,
         sharding: ShardingProtocol | None = None,
     ) -> None:
         """Initialize a ZeroArray instance.
 
         Args:
-            data: Scalar or (optionally nested) sequence of scalar elements.
+            data: Scalar, ecosystem array, or (optionally nested) sequence of scalar elements.
             shape: Explicit shape tuple or TensorShape. If None, inferred from data.
-            dtype: Data type of the array elements.
+            dtype: Data type of the array elements (inferred from array data if None).
             device: Device or sequence of devices where the array resides.
             sharding: Optional sharding descriptor for distributed arrays.
 
@@ -437,7 +483,12 @@ class ZeroArray:
         elif len(self._flat) != expected_size:
             raise ValueError(f"cannot reshape array of size {len(self._flat)} into shape {self._shape}")
 
-        self._dtype: DType | DTypeLikeProtocol | str | type[Scalar] = dtype
+        if dtype is not None:
+            self._dtype: DType | CompilerDType | DTypeLikeProtocol | str | type[Scalar] = dtype
+        elif isinstance(data, (JaxNdarray, CompilerTensor, SerializedArray, ArrayProtocol)):
+            self._dtype = str(data.dtype).split(".")[-1].lower()
+        else:
+            self._dtype = DType.float32
         if device is None:
             self._devices: tuple[DeviceProtocol, ...] = (Device("cpu", 0),)
         elif isinstance(device, DeviceProtocol):
@@ -445,6 +496,62 @@ class ZeroArray:
         else:
             self._devices = tuple(device)
         self._sharding = sharding
+
+    @classmethod
+    def from_jax_array(
+        cls,
+        arr: JaxNdarray | CompilerTensor | SerializedArray | ArrayProtocol,
+        device: DeviceProtocol | Sequence[DeviceProtocol] | None = None,
+        sharding: ShardingProtocol | None = None,
+    ) -> ZeroArray:
+        """Construct a ZeroArray from a zero_jax.numpy.ndarray or ecosystem array.
+
+        Args:
+            arr: Source zero_jax.numpy.ndarray, CompilerTensor, SerializedArray, or ArrayProtocol.
+            device: Optional device override.
+            sharding: Optional sharding override.
+
+        Returns:
+            ZeroArray preserving the source array's values, shape, and dtype.
+        """
+        return cls(arr, shape=tuple(int(d) for d in arr.shape), device=device, sharding=sharding)
+
+    def to_jax_array(self) -> JaxNdarray:
+        """Convert this ZeroArray into a zero_jax.numpy.ndarray with matching shape and dtype.
+
+        Returns:
+            A zero_jax.numpy.ndarray with identical elements, shape, and dtype.
+        """
+        dt_str = (
+            self._dtype.value
+            if isinstance(self._dtype, (DType, CompilerDType))
+            else (
+                self._dtype.name
+                if isinstance(self._dtype, DTypeLikeProtocol)
+                else (
+                    "int32"
+                    if self._dtype is int
+                    else (
+                        "bool"
+                        if self._dtype is bool
+                        else ("complex64" if self._dtype is complex else str(self._dtype).split(".")[-1].lower())
+                    )
+                )
+            )
+        )
+        raw_nested = self.tolist()
+        jax_arr: JaxNdarray = jnp.asarray(raw_nested, dtype=dt_str)
+        if jax_arr.shape != self._shape:
+            jax_arr = jax_arr.reshape(self._shape)
+        return jax_arr
+
+    def __jax_array__(self) -> JaxNdarray:
+        """Return the zero_jax.numpy.ndarray representation for JAX interoperability.
+
+        Returns:
+            Converted zero_jax.numpy.ndarray.
+        """
+        return self.to_jax_array()
 
     @classmethod
     def from_tensor_spec(
@@ -550,7 +657,7 @@ class ZeroArray:
         return self._shape
 
     @property
-    def dtype(self) -> DType | DTypeLikeProtocol | str | type[Scalar]:
+    def dtype(self) -> DType | CompilerDType | DTypeLikeProtocol | str | type[Scalar]:
         """Return the data type of the array.
 
         Returns:
@@ -601,6 +708,14 @@ class ZeroArray:
         """
         return list(self._flat)
 
+    def tolist(self) -> NestedScalarSequence | Scalar:
+        """Return the nested Python list (or scalar if 0-D) matching self.shape.
+
+        Returns:
+            Nested Python list of scalars or scalar value.
+        """
+        return _unflatten_to_nested(self._flat, self._shape)
+
     def __iter__(self) -> Iterator[Scalar]:
         """Iterate over the flat scalar elements of the array.
 
@@ -633,6 +748,9 @@ class ZeroArray:
         """
         if isinstance(other, ArrayProtocol) and isinstance(other, ToListProtocol):
             return self._shape == other.shape and self._flat == list(other.to_list())
+        if isinstance(other, (JaxNdarray, SerializedArray)):
+            other_flat, other_shape = _flatten_nested_data(other)
+            return self._shape == other_shape and self._flat == other_flat
         if isinstance(other, (int, float, complex, bool)) and self.size == 1:
             return self._flat[0] == other
         return False
@@ -672,19 +790,22 @@ class PyTreeDef:
         keys: tuple[DictKey, ...] = (),
         children: tuple[PyTreeDef, ...] = (),
         custom_cls: CustomNodeType | None = None,
+        aux_metadata: RecordMetadata | None = None,
     ) -> None:
         """Initialize a PyTreeDef node.
 
         Args:
-            node_type: Identifier for the container kind ('leaf', 'list', 'tuple', 'dict', 'custom').
+            node_type: Identifier for the container kind ('leaf', 'list', 'tuple', 'dict', 'record', 'custom').
             keys: Mapping or field keys associated with children.
             children: Child PyTreeDef structures.
             custom_cls: Registered custom dataclass, NamedTuple, or State mapping type if applicable.
+            aux_metadata: Optional RecordMetadata preserved when unflattening a zero_grain.Record.
         """
         self._node_type = node_type
         self._keys = keys
         self._children = children
         self._custom_cls = custom_cls
+        self._aux_metadata = aux_metadata
 
     @property
     def node_type(self) -> str:
@@ -721,6 +842,15 @@ class PyTreeDef:
             Custom class type or None.
         """
         return self._custom_cls
+
+    @property
+    def aux_metadata(self) -> RecordMetadata | None:
+        """Return the auxiliary RecordMetadata if this node represents a zero_grain.Record.
+
+        Returns:
+            RecordMetadata instance or None.
+        """
+        return self._aux_metadata
 
     @property
     def num_leaves(self) -> int:
@@ -787,6 +917,7 @@ Array = Union[
     ZeroArray,
     CompilerTensor,
     JaxNdarray,
+    SerializedArray,
     ArrayProtocol,
     ShapeOnlyProtocol,
     TensorSpec,
@@ -799,6 +930,8 @@ ArraySharded = Union[ZeroArray, ShardingAttrProtocol, Array]
 Numeric = Union[
     Array,
     FlaxVariable[Union[CompilerTensor, JaxNdarray, ZeroArray, Scalar]],
+    FlaxOptState[Union[CompilerTensor, JaxNdarray, ZeroArray, Scalar]],
+    FlaxOptVariable[Union[CompilerTensor, JaxNdarray, ZeroArray, Scalar]],
     VariableLeafProtocol,
     SharedMemoryArray,
     SharedMemoryArrayMetadata,
@@ -812,6 +945,7 @@ ArrayDType = Union[DType, CompilerDType, DTypeLikeProtocol, str, type[Scalar], t
 PRNGKey = Union[tuple[int, int], Array]
 LeafValue = Union[
     Numeric,
+    "MaskedNode",
     str,
     None,
     DeviceProtocol,
@@ -827,6 +961,11 @@ ArrayTree = Union[
     LeafValue,
     Iterable["ArrayTree"],
     Mapping[DictKey, "ArrayTree"],
+    FrozenDict,
+    FlaxState,
+    Record["ArrayTree"],
+    "_OptStateDataclassBase",
+    "OptState",
     MappableDataclassProtocol,
     DataclassInstanceProtocol,
     NamedTuplePyTreeProtocol,
@@ -836,6 +975,11 @@ ArrayDeviceTree = Union[
     LeafValue,
     Iterable["ArrayDeviceTree"],
     Mapping[DictKey, "ArrayDeviceTree"],
+    FrozenDict,
+    FlaxState,
+    Record["ArrayDeviceTree"],
+    "_OptStateDataclassBase",
+    "OptState",
     MappableDataclassProtocol,
     DataclassInstanceProtocol,
     NamedTuplePyTreeProtocol,
@@ -845,6 +989,11 @@ ArrayNumpyTree = Union[
     LeafValue,
     Iterable["ArrayNumpyTree"],
     Mapping[DictKey, "ArrayNumpyTree"],
+    FrozenDict,
+    FlaxState,
+    Record["ArrayNumpyTree"],
+    "_OptStateDataclassBase",
+    "OptState",
     MappableDataclassProtocol,
     DataclassInstanceProtocol,
     NamedTuplePyTreeProtocol,
@@ -854,11 +1003,19 @@ PyTree = Union[
     LeafValue,
     Iterable["PyTree"],
     Mapping[DictKey, "PyTree"],
+    FrozenDict,
+    FlaxState,
+    Record["PyTree"],
+    "_OptStateDataclassBase",
+    "OptState",
     MappableDataclassProtocol,
     DataclassInstanceProtocol,
     NamedTuplePyTreeProtocol,
     StateMappingProtocol,
 ]
+
+from zero_optax import MaskedNode, OptState  # noqa: E402
+from zero_optax.base import _OptStateDataclassBase  # noqa: E402
 
 TDimMatcher = Union[int, set[int], tuple[int, ...], str, EllipsisType, None]
 TShapeMatcher = Sequence[TDimMatcher]
@@ -879,7 +1036,7 @@ def is_scalar(val: PyTree) -> bool:
         return True
     if isinstance(val, TensorSpec):
         return len(val.shape) == 0
-    if isinstance(val, ArrayProtocol):
+    if isinstance(val, (ArrayProtocol, SerializedArray)):
         return val.shape == ()
     if isinstance(val, ShapeOnlyProtocol):
         raw_s = val.shape
@@ -888,19 +1045,20 @@ def is_scalar(val: PyTree) -> bool:
 
 
 def is_array(val: PyTree) -> bool:
-    """Check whether a value satisfies the ArrayProtocol, VariableLeafProtocol, or TensorSpec interface.
+    """Check whether a value satisfies ArrayProtocol, VariableLeafProtocol, SerializedArray, or TensorSpec.
 
     Args:
         val: Value to inspect.
 
     Returns:
-        True if val implements ArrayProtocol, VariableLeafProtocol, SharedMemoryArray, or TensorSpec.
+        True if val implements ArrayProtocol, VariableLeafProtocol, SerializedArray, SharedMemoryArray, or TensorSpec.
     """
     return isinstance(
         val,
         (
             ArrayProtocol,
             VariableLeafProtocol,
+            SerializedArray,
             SharedMemoryArray,
             SharedMemoryArrayMetadata,
             TensorSpec,
@@ -932,25 +1090,38 @@ __all__ = [
     "DevicesMethodProtocol",
     "DictKey",
     "EllipsisType",
+    "FlaxOptState",
+    "FlaxOptVariable",
+    "FlaxState",
     "FlaxVariable",
+    "FrozenDict",
+    "GlobalArraySharding",
     "JaxNdarray",
     "LeafValue",
     "MappableDataclassProtocol",
+    "MaskedNode",
+    "NamedSharding",
     "NamedTuplePyTreeProtocol",
     "NestedScalarSequence",
     "Numeric",
+    "OptState",
     "OptStateLeafProtocol",
     "PRNGKey",
+    "PartitionSpec",
     "PmapSharding",
     "PyTree",
     "PyTreeDef",
+    "Record",
+    "RecordMetadata",
     "Scalar",
+    "SerializedArray",
     "Shape",
     "ShapeOnlyProtocol",
     "SharedMemoryArray",
     "SharedMemoryArrayMetadata",
     "ShardingAttrProtocol",
     "ShardingProtocol",
+    "SingleDeviceSharding",
     "StateMappingProtocol",
     "TDimMatcher",
     "TShapeMatcher",
@@ -958,6 +1129,7 @@ __all__ = [
     "ToListProtocol",
     "VariableLeafProtocol",
     "ZeroArray",
+    "_OptStateDataclassBase",
     "is_array",
     "is_scalar",
 ]

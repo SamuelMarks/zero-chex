@@ -7,17 +7,28 @@ import struct
 
 import pytest
 import zero_jax.numpy as jnp
+import zero_jax.tree_util as jax_tree_util
 from ml_switcheroo_compiler.core.tensor import Tensor as CompilerTensor
 from ml_switcheroo_compiler.core.tensor import TensorConfig, as_tensor_obj
-from ml_switcheroo_ir import DType
+from ml_switcheroo_ir import DType, LogicalMesh, PartitionSpec
 from zero_flax.core import FrozenDict
 from zero_flax.nnx.state import State
 from zero_flax.nnx.variables import BatchStat, Param
-from zero_grain import Batch, DataLoader, InMemoryDataSource, SequentialSampler, SharedMemoryArray
+from zero_grain import (
+    Batch,
+    DataLoader,
+    InMemoryDataSource,
+    Record,
+    RecordMetadata,
+    SequentialSampler,
+    SharedMemoryArray,
+)
 from zero_grain._types import ElementTree
-from zero_optax import ScaleByScheduleState, TraceState
+from zero_jax.sharding import Mesh, NamedSharding
+from zero_optax import MaskedNode, MaskedState, ScaleByAdamState, ScaleByScheduleState, TraceState, masked
 from zero_optax.optimizers.adam import adam
 from zero_orbax.checkpoint import PyTreeCheckpointer, PyTreeCheckpointHandler
+from zero_orbax.core import GlobalArraySharding, SerializedArray
 
 from zero_chex import (
     Device,
@@ -39,6 +50,7 @@ from zero_chex import (
     assert_trees_all_equal_shapes_and_dtypes,
     assert_trees_all_equal_sizes,
     assert_trees_all_equal_structs,
+    assert_trees_all_finite,
     dataclass,
 )
 from zero_chex._src.asserts_internal import format_tree_path
@@ -504,3 +516,123 @@ def test_cross_ecosystem_pytree_integration(tmp_path: pathlib.Path) -> None:
         if isinstance(v, (list, int, float))
     }
     assert_trees_all_close(original_tree, restored_tree)
+
+    # 5. ScaleByAdamState, MaskedState, MaskedNode assertions
+    adam_s1 = ScaleByAdamState(
+        count=jnp.array(1),
+        mu={"w": jnp.array([1.0, 2.0])},
+        nu={"w": jnp.array([0.1, 0.2])},
+    )
+    adam_s2 = ScaleByAdamState(
+        count=jnp.array(1),
+        mu={"w": jnp.array([1.0, 2.0])},
+        nu={"w": jnp.array([0.1, 0.2])},
+    )
+    assert_trees_all_close(adam_s1, adam_s2)
+    assert_trees_all_equal_shapes_and_dtypes(adam_s1, adam_s2)
+
+    masked_tx = masked(adam(1e-2), {"w": True, "b": False})
+    m_state_1 = masked_tx.init({"w": jnp.array([1.0, 2.0]), "b": jnp.array([0.5])})
+    m_state_2 = masked_tx.init({"w": jnp.array([1.0, 2.0]), "b": jnp.array([0.5])})
+    assert isinstance(m_state_1, MaskedState)
+    assert_trees_all_close(m_state_1, m_state_2)
+    assert_trees_all_equal(m_state_1, m_state_2)
+    assert_trees_all_equal_dtypes(m_state_1, m_state_2)
+    assert_trees_all_equal_shapes(m_state_1, m_state_2)
+    assert_trees_all_equal_shapes_and_dtypes(m_state_1, m_state_2)
+    assert_trees_all_finite(m_state_1)
+    assert not _leaf_close(MaskedNode(), 1.0)
+    assert not _leaf_equal(MaskedNode(), 1.0)
+
+    # 6. SerializedArray and zero_grain Record PyTrees
+    sa_1 = SerializedArray([[1.0, 2.0], [3.0, 4.0]], shape=(2, 2), dtype="float32")
+    sa_2 = SerializedArray([[1.0, 2.0], [3.0, 4.0]], shape=(2, 2), dtype="float32")
+    sa_0d = SerializedArray(5.0, shape=(), dtype="float32")
+    assert_trees_all_close({"sa": sa_1, "s0": sa_0d}, {"sa": sa_2, "s0": sa_0d})
+    assert_trees_all_equal_shapes_and_dtypes({"sa": sa_1}, {"sa": sa_2})
+    assert_trees_all_finite({"sa": sa_1})
+    assert tree_all({"sa": sa_1})
+    assert not tree_all({"sa": SerializedArray([1.0, 0.0], shape=(2,), dtype="float32")})
+    assert_tree_is_on_host({"sa": sa_1}, allow_cpu_device=False)
+    assert_tree_is_on_device({"sa": sa_1}, platform="cpu")
+
+    rec_1: Record[dict[str, jnp.ndarray]] = Record(
+        metadata=RecordMetadata(index=0, record_key=1),
+        data={"x": jnp.array([[1.0, 2.0], [3.0, 4.0]])},
+    )
+    rec_2: Record[dict[str, jnp.ndarray]] = Record(
+        metadata=RecordMetadata(index=1, record_key=2),
+        data={"x": jnp.array([[1.0, 2.0], [3.0, 4.0]])},
+    )
+    assert_trees_all_close(rec_1, rec_2)
+    assert_trees_all_equal_shapes_and_dtypes(rec_1, rec_2)
+    mapped_rec = tree_map(_identity_leaf, rec_1)
+    assert isinstance(mapped_rec, Record)
+    assert mapped_rec.metadata == rec_1.metadata
+
+    # 7. Sharding and device assertions across NamedSharding, PartitionSpec, GlobalArraySharding, and Variable
+    mesh = Mesh(devices=["cpu:0", "cpu:1"], axis_names=("x",))
+    named_sharding = NamedSharding(mesh, PartitionSpec("x"))
+    sharded_jax = jnp.ndarray(jnp.array([1.0, 2.0])._tensor, sharding=named_sharding)
+    pspec_jax = jnp.ndarray(jnp.array([1.0, 2.0])._tensor, sharding=PartitionSpec("x"))
+    log_mesh = LogicalMesh({"x": 2})
+    _ = log_mesh
+    orbax_sharding = GlobalArraySharding()
+    orbax_jax = jnp.ndarray(jnp.array([1.0, 2.0])._tensor, sharding=orbax_sharding)
+    sharded_flax_state = State(
+        {
+            "named": Param(sharded_jax),
+            "pspec": Param(jnp.array([1.0, 2.0]), sharding=("x",)),
+            "orbax": Param(orbax_jax),
+        }
+    )
+    sharded_fdict = FrozenDict({"a": sharded_jax, "b": pspec_jax, "c": orbax_jax})
+    sharded_record = Record(metadata=RecordMetadata(index=0, record_key=0), data={"a": sharded_jax})
+
+    assert_tree_is_sharded(sharded_flax_state)
+    assert_tree_is_sharded(sharded_fdict)
+    assert_tree_is_sharded(sharded_record, devices=[Device("cpu", 0), Device("cpu", 1)])
+    assert_tree_is_sharded({"o": orbax_jax}, devices=[Device("cpu", 0), Device("cpu", 1)])
+    with pytest.raises(AssertionError, match="sharded across"):
+        assert_tree_is_sharded({"a": sharded_jax}, devices=[Device("cpu", 0)])
+
+    assert_tree_is_on_device({"a": sharded_jax, "b": orbax_jax, "c": ct1, "v": Param(ct1)}, platform="cpu")
+    assert_tree_is_on_host({"a": jnp.array([1.0, 2.0]), "c": ct1, "p_scalar": Param(1.0)})
+    plain_mesh = Mesh(devices=["cpu"], axis_names=("x",))
+    plain_sharded = jnp.ndarray(jnp.array([1.0])._tensor, sharding=NamedSharding(plain_mesh, PartitionSpec("x")))
+    assert_tree_is_sharded({"p": plain_sharded}, devices=[Device("cpu", 0)])
+
+    # 8. External zero_jax.tree_util registration delegation
+    import dataclasses as std_dc
+
+    @std_dc.dataclass
+    class _JaxKeyedBox:
+        """Custom container registered via zero_jax.tree_util.register_pytree_with_keys."""
+
+        x: jnp.ndarray
+
+    jax_tree_util.register_pytree_with_keys(
+        _JaxKeyedBox,
+        lambda b: ([(jax_tree_util.GetAttrKey("x"), b.x)], ()),
+        lambda _aux, children: _JaxKeyedBox(children[0]),
+    )
+    box1 = _JaxKeyedBox(jnp.array([1.0, 2.0]))
+    box2 = tree_map(_identity_leaf, box1)
+    assert isinstance(box2, _JaxKeyedBox)
+    assert_trees_all_close(box1, box2)
+
+    @std_dc.dataclass
+    class _JaxPlainBox:
+        """Custom container registered via zero_jax.tree_util.register_pytree_node."""
+
+        x: jnp.ndarray
+
+    jax_tree_util.register_pytree_node(
+        _JaxPlainBox,
+        lambda b: ([b.x], ()),
+        lambda _aux, children: _JaxPlainBox(children[0]),
+    )
+    pbox1 = _JaxPlainBox(jnp.array([3.0, 4.0]))
+    pbox2 = tree_map(_identity_leaf, pbox1)
+    assert isinstance(pbox2, _JaxPlainBox)
+    assert_trees_all_close(pbox1, pbox2)

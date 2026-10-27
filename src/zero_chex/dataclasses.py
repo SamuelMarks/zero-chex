@@ -94,6 +94,38 @@ class MappableDataclassMixin(collections.abc.Mapping[str, PyTree]):
         """
         return _get_field_values(self)
 
+    @property
+    def _fields(self) -> tuple[str, ...]:
+        """Return the ordered tuple of declared dataclass field names.
+
+        Returns:
+            Tuple of field name strings.
+        """
+        return self.__chex_mappable_fields__()
+
+    def _asdict(self) -> dict[str, PyTree]:
+        """Return an ordered mapping of dataclass field names to their current values.
+
+        Returns:
+            Dictionary mapping field names to field values.
+        """
+        return dict(zip(self.__chex_mappable_fields__(), self.__chex_field_values__()))
+
+    @classmethod
+    def _make(cls: type[T], iterable: Sequence[PyTree]) -> T:
+        """Reconstruct a dataclass instance from an ordered sequence of field values.
+
+        Args:
+            iterable: Ordered sequence of field values matching declared fields.
+
+        Returns:
+            Reconstructed dataclass instance.
+        """
+        assert dataclasses.is_dataclass(cls)
+        field_names = tuple(f.name for f in dataclasses.fields(cls))
+        kwargs = dict(zip(field_names, iterable))
+        return cls(**kwargs)
+
     def __getitem__(self, key: str) -> PyTree:
         """Retrieve a dataclass field value by field name.
 

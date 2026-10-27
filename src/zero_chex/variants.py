@@ -9,6 +9,8 @@ from enum import Enum
 from typing import Generic, Protocol, TypeVar, Union, overload, runtime_checkable
 
 import zero_jax
+from ml_switcheroo_compiler.core.device import Device as CompilerDevice
+from ml_switcheroo_compiler.core.tensor import TensorConfig as CompilerTensorConfig
 from typing_extensions import ParamSpec, TypeGuard
 
 from zero_chex._src.asserts_internal import (
@@ -19,7 +21,15 @@ from zero_chex._src.asserts_internal import (
 )
 from zero_chex._src.tree_util import tree_map
 from zero_chex.mocks import _abstract_arg_signature, _fake_pmap_impl, _is_pytree_result
-from zero_chex.types import Device, JaxNdarray, LeafValue, PyTree, ZeroArray
+from zero_chex.types import (
+    CompilerTensor,
+    Device,
+    JaxNdarray,
+    LeafValue,
+    PyTree,
+    VariableLeafProtocol,
+    ZeroArray,
+)
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -55,7 +65,7 @@ class ChexVariantType(Enum):
 
 
 def _place_leaf_on_device(leaf: LeafValue, target_dev: Device) -> LeafValue:
-    """Place a single PyTree leaf onto target_dev if it is a ZeroArray or JaxNdarray.
+    """Place a single PyTree leaf onto target_dev for ZeroArray, JaxNdarray, Variable, or CompilerTensor.
 
     Args:
         leaf: Leaf value to transfer.
@@ -64,6 +74,13 @@ def _place_leaf_on_device(leaf: LeafValue, target_dev: Device) -> LeafValue:
     Returns:
         Device-placed leaf value.
     """
+    if isinstance(leaf, VariableLeafProtocol):
+        inner_val = leaf.value
+        assert isinstance(
+            inner_val,
+            (ZeroArray, JaxNdarray, CompilerTensor, VariableLeafProtocol, int, float, complex, bool, str, type(None)),
+        )
+        return leaf.replace(_place_leaf_on_device(inner_val, target_dev))
     if isinstance(leaf, ZeroArray):
         return ZeroArray(
             leaf.to_list(),
@@ -73,7 +90,16 @@ def _place_leaf_on_device(leaf: LeafValue, target_dev: Device) -> LeafValue:
             sharding=leaf.sharding,
         )
     if isinstance(leaf, JaxNdarray):
-        return zero_jax.device_put(leaf, target_dev.platform)
+        return zero_jax.device_put(leaf, zero_jax.Device(target_dev.platform, target_dev.id))
+    if isinstance(leaf, CompilerTensor):
+        return CompilerTensor(
+            leaf.data,
+            CompilerTensorConfig(
+                shape=leaf.shape,
+                dtype=leaf.dtype,
+                device=CompilerDevice(target_dev.platform, target_dev.id),
+            ),
+        )
     return leaf
 
 
@@ -155,7 +181,6 @@ class VariantDecorator:
         raw_axis_name = variant_kwargs.get("axis_name")
         axis_name: str | None = raw_axis_name if isinstance(raw_axis_name, str) else None
 
-        @functools.wraps(target_fn)
         def _wrapped(*args: P.args, **kwargs: P.kwargs) -> R:
             """Execute target_fn with variant-specific compilation, device, or pmap tracking.
 
@@ -220,6 +245,7 @@ class VariantDecorator:
                 return functools.partial(target_fn, *placed_args, **placed_kwargs)()
             return target_fn(*args, **kwargs)
 
+        functools.update_wrapper(_wrapped, target_fn, assigned=("__doc__",))
         return _wrapped
 
     @overload

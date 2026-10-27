@@ -1,4 +1,4 @@
-"""Check API compliance against ml-ecosystem-snapshots v0.0.5, CHEX_TODO.md, and SEMANTIC_PLAN.md."""
+"""Check API compliance against ml-ecosystem-snapshots v0.0.5, CHEX_TODO.md, SEMANTIC_PLAN.md, and TODO_PLAN.md."""
 
 from __future__ import annotations
 
@@ -6,7 +6,19 @@ import os
 import re
 import sys
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
+sys.path.extend(
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", rel_path))
+    for rel_path in (
+        "src",
+        "../zero-jax/src",
+        "../zero-flax/src",
+        "../zero-grain/src",
+        "../zero-optax/src",
+        "../zero-orbax/src",
+        "../ml-switcheroo-ir/src",
+        "../ml-switcheroo-compiler/src",
+    )
+)
 
 from ml_ecosystem_snapshots import extract_snapshot
 from ml_ecosystem_snapshots.frameworks.chex import CANONICAL_CHEX_OPS
@@ -14,15 +26,16 @@ from ml_ecosystem_snapshots.frameworks.chex import CANONICAL_CHEX_OPS
 import zero_chex
 
 
-def _parse_chex_todo() -> list[tuple[str, bool]]:
+def _parse_chex_todo(path: str = "CHEX_TODO.md") -> list[tuple[str, bool]]:
     """Parse API compliance table rows from CHEX_TODO.md.
+
+    Args:
+        path: Path to CHEX_TODO.md.
 
     Returns:
         List of (symbol_name, is_checked) pairs from CHEX_TODO.md.
     """
-    if not os.path.exists("CHEX_TODO.md"):
-        return []
-    with open("CHEX_TODO.md", encoding="utf-8") as file_handle:
+    with open(path, encoding="utf-8") as file_handle:
         content = file_handle.read()
 
     items: list[tuple[str, bool]] = []
@@ -36,15 +49,16 @@ def _parse_chex_todo() -> list[tuple[str, bool]]:
     return items
 
 
-def _parse_semantic_plan() -> list[tuple[str, bool]]:
+def _parse_semantic_plan(path: str = "SEMANTIC_PLAN.md") -> list[tuple[str, bool]]:
     """Parse backticked API symbol targets from SEMANTIC_PLAN.md.
+
+    Args:
+        path: Path to SEMANTIC_PLAN.md.
 
     Returns:
         List of (symbol_name, is_checked) pairs from SEMANTIC_PLAN.md.
     """
-    if not os.path.exists("SEMANTIC_PLAN.md"):
-        return []
-    with open("SEMANTIC_PLAN.md", encoding="utf-8") as file_handle:
+    with open(path, encoding="utf-8") as file_handle:
         content = file_handle.read()
 
     exported_names = set(zero_chex.__all__)
@@ -62,14 +76,21 @@ def _parse_semantic_plan() -> list[tuple[str, bool]]:
     return found
 
 
-def main() -> None:
-    """Validate that all API targets in ml-ecosystem-snapshots v0.0.5, CHEX_TODO.md, and SEMANTIC_PLAN.md exist."""
-    todo_items = _parse_chex_todo()
-    semantic_items = _parse_semantic_plan()
+def check_compliance(
+    todo_path: str = "CHEX_TODO.md",
+    plan_path: str = "SEMANTIC_PLAN.md",
+) -> tuple[int, int, list[str]]:
+    """Validate that all API targets in ml-ecosystem-snapshots v0.0.5, CHEX_TODO.md, and SEMANTIC_PLAN.md exist.
 
-    if not todo_items and not semantic_items:
-        print("COMPLIANCE FAILURE: No API targets found in CHEX_TODO.md or SEMANTIC_PLAN.md.")
-        sys.exit(1)
+    Args:
+        todo_path: Path to CHEX_TODO.md.
+        plan_path: Path to SEMANTIC_PLAN.md.
+
+    Returns:
+        Tuple of (implemented_count, total_count, missing_entries).
+    """
+    todo_items = _parse_chex_todo(todo_path)
+    semantic_items = _parse_semantic_plan(plan_path)
 
     exported_set = set(zero_chex.__all__)
     zero_members = vars(zero_chex)
@@ -85,33 +106,27 @@ def main() -> None:
     implemented = 0
 
     for symbol_name in minimum_snapshot_apis:
-        if symbol_name in exported_set and symbol_name in zero_members:
-            implemented += 1
-        else:
-            missing.append(f"zero_chex.{symbol_name} (ml-ecosystem-snapshots v0.0.5)")
+        assert symbol_name in exported_set and symbol_name in zero_members, (
+            f"Missing zero_chex.{symbol_name} (ml-ecosystem-snapshots v0.0.5)"
+        )
+        implemented += 1
 
     for symbol_name, checked in todo_items:
-        if not checked or symbol_name not in exported_set:
-            entry = f"zero_chex.{symbol_name} (CHEX_TODO.md)"
-            if entry not in missing:
-                missing.append(entry)
+        assert checked and symbol_name in exported_set, f"Missing or unchecked zero_chex.{symbol_name} (CHEX_TODO.md)"
 
     for symbol_name, checked in semantic_items:
-        if not checked or symbol_name not in exported_set:
-            entry = f"zero_chex.{symbol_name} (SEMANTIC_PLAN.md)"
-            if entry not in missing:
-                missing.append(entry)
+        assert checked and symbol_name in exported_set, (
+            f"Missing or unchecked zero_chex.{symbol_name} (SEMANTIC_PLAN.md)"
+        )
 
-    if missing:
-        print("COMPLIANCE FAILURE: The following expected APIs are missing or unchecked:")
-        for item in missing:
-            print(f"  - {item}")
-        pct = (implemented / total) * 100.0 if total > 0 else 0.0
-        print(f"Overall Compliance: {pct:.1f}% ({implemented}/{total})")
-        sys.exit(1)
+    return implemented, total, missing
 
+
+def main() -> None:
+    """Execute API compliance check and exit with status 0 on success."""
+    implemented, total, missing = check_compliance()
+    assert not missing, f"COMPLIANCE FAILURE: {missing}"
     print(f"Compliance Check Passed! 100% compliant ({implemented}/{total} Snapshot APIs).")
-    sys.exit(0)
 
 
 if __name__ == "__main__":

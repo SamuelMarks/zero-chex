@@ -51,7 +51,7 @@ ignore = ["UP007"]
 convention = "google"
 
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.10"
 mypy_path = [
     "src",
     "../zero-jax/src",
@@ -59,6 +59,8 @@ mypy_path = [
     "../zero-grain/src",
     "../zero-optax/src",
     "../zero-orbax/src",
+    "../ml-switcheroo-ir/src",
+    "../ml-switcheroo-compiler/src",
 ]
 files = ["src", "tests", "scripts"]
 plugins = ["pydantic.mypy"]
@@ -82,7 +84,7 @@ enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
 disable_error_code = ["override"]
 
 [[tool.mypy.overrides]]
-module = ["pytest", "ml_ecosystem_snapshots", "ml_ecosystem_snapshots.*", "ml_switcheroo_compiler", "ml_switcheroo_compiler.*"]
+module = ["pytest", "ml_ecosystem_snapshots", "ml_ecosystem_snapshots.*", "ml_switcheroo_compiler.*"]
 ignore_missing_imports = true
 follow_imports = "skip"
 
@@ -92,12 +94,28 @@ follow_imports = "silent"
 disallow_any_explicit = false
 
 [[tool.mypy.overrides]]
+module = [
+    "zero_jax",
+    "zero_jax.*",
+    "zero_flax",
+    "zero_flax.*",
+    "zero_grain",
+    "zero_grain.*",
+    "zero_optax",
+    "zero_optax.*",
+    "zero_orbax",
+    "zero_orbax.*",
+]
+follow_imports = "silent"
+disallow_any_explicit = false
+
+[[tool.mypy.overrides]]
 module = ["tests.conftest"]
 disallow_untyped_decorators = false
 
 [tool.coverage.run]
 branch = true
-source = ["src"]
+source = ["src/zero_chex", "scripts"]
 
 [tool.coverage.report]
 fail_under = 100
@@ -105,6 +123,7 @@ show_missing = true
 exclude_also = [
     "if TYPE_CHECKING:",
     "if typing.TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
     "@abstractmethod",
     '\.\.\.',
 ]
@@ -126,11 +145,14 @@ exclude = ["setup.py", "docs", "build", "dist"]
 
 [tool.pytest.ini_options]
 pythonpath = [
+    ".",
     "src",
     "../zero-jax/src",
     "../zero-flax/src",
     "../zero-grain/src",
     "../zero-optax/src",
     "../zero-orbax/src",
+    "../ml-switcheroo-ir/src",
+    "../ml-switcheroo-compiler/src",
 ]
-addopts = "--cov=src --cov-branch --cov-report=term-missing --cov-fail-under=100"
+addopts = "--cov=src/zero_chex --cov=scripts --cov-branch --cov-report=term-missing --cov-fail-under=100"

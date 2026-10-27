@@ -11,12 +11,19 @@ from types import TracebackType
 from typing import Generic, Protocol, TypeVar, Union, overload, runtime_checkable
 
 import zero_jax
+import zero_jax._config_internal as _jax_cfg
 import zero_jax.numpy as jnp
+import zero_optax._tree as _optax_tree
+import zero_optax.losses.regression as _optax_regression
+from ml_switcheroo_compiler.core.tensor import TensorConfig as _CompilerTensorConfig
 from ml_switcheroo_compiler.tracing.state import global_tracing_state
+from ml_switcheroo_compiler.tracing.tracer import ProxyTensor as _ProxyTensor
 from ml_switcheroo_ir import DType, LogicalNode, TensorSpec
 from typing_extensions import ParamSpec, TypeGuard
 from zero_jax._types import PyTree as JaxPyTree
 from zero_jax.api.ad import CustomJVPWrapper, CustomVJPWrapper
+from zero_optax._types import ArrayLike as _OptaxArrayLike
+from zero_optax._types import DTypeLike as _OptaxDTypeLike
 
 from zero_chex._src.asserts_internal import (
     RUNTIME_STATE as _STATE,
@@ -903,9 +910,9 @@ class MaxTracesWrapper(Generic[P, R]):
         self._static_argnums = static_argnums
         self._static_argnames = static_argnames
         self._key = _STATE.allocate_fn_key("max_traces")
-        self.__name__: str = fn.__name__
+        self.__name__: str = type(fn).__name__
         self.__wrapped__ = fn
-        functools.update_wrapper(self, fn)
+        functools.update_wrapper(self, fn, assigned=("__doc__",))
 
     def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R:
         """Execute the wrapped function and increment its trace counter on new abstract signatures.
@@ -920,7 +927,7 @@ class MaxTracesWrapper(Generic[P, R]):
         Raises:
             AssertionError: If assertions are enabled and trace count exceeds max_traces.
         """
-        if not _STATE.jit_disabled:
+        if not _STATE.jit_disabled and not bool(_jax_cfg.config.read("jax_disable_jit")):
             pytree_args = [a for a in args if _is_pytree_result(a)]
             pytree_kwargs = {k: v for k, v in kwargs.items() if _is_pytree_result(v)}
             sig = _abstract_arg_signature(
@@ -1491,6 +1498,63 @@ def _compute_nth_fd_derivative(
     return (plus_deriv - minus_deriv) / (2.0 * eps)
 
 
+def _unwrap_traced_root_sum(
+    out: JaxNdarray | CompilerTensor | float | int,
+) -> JaxNdarray | CompilerTensor | float | int:
+    """Unwrap a root full-tensor Sum node during active tracing so ir_grad seeds matching shape.
+
+    Args:
+        out: Traced output value from _jax_f.
+
+    Returns:
+        Unwrapped JaxNdarray if out is a root Sum node, otherwise out unchanged.
+    """
+    t = out._tensor if isinstance(out, JaxNdarray) else out
+    if (
+        global_tracing_state.is_tracing
+        and global_tracing_state.active_graph is not None
+        and isinstance(t, CompilerTensor)
+        and isinstance(t.data, _ProxyTensor)
+    ):
+        node = global_tracing_state.active_graph.nodes[t.data.id]
+        if node.op_type == "Sum" and node.attributes.get("axis") is None and len(node.inputs) == 1:
+            in_id = node.inputs[0]
+            in_node = global_tracing_state.active_graph.nodes[in_id]
+            in_shape = tuple(int(d) for d in in_node.shape_metadata)
+            return jnp.ndarray(
+                CompilerTensor(
+                    data=_ProxyTensor(id=in_id, shape=in_shape, dtype=t.dtype.value),
+                    config=_CompilerTensorConfig(shape=in_shape, dtype=t.dtype, device=t.device),
+                )
+            )
+    return out
+
+
+def _build_unit_tangent_args(
+    jax_args: Sequence[JaxPyTree],
+    arg_idx: int,
+    elem_idx: int,
+) -> tuple[JaxPyTree, ...]:
+    """Construct tangent PyTree arguments with 1.0 at (arg_idx, elem_idx) and 0.0 elsewhere.
+
+    Args:
+        jax_args: Primal JaxPyTree arguments.
+        arg_idx: Target argument index.
+        elem_idx: Flat scalar index within target argument.
+
+    Returns:
+        Tuple of tangent JaxPyTree arguments matching jax_args.
+    """
+    tangents: list[JaxPyTree] = []
+    for idx, arg in enumerate(jax_args):
+        assert isinstance(arg, JaxNdarray)
+        n_elems = math.prod(arg.shape) if arg.shape else 1
+        flat_t = [1.0 if (idx == arg_idx and k == elem_idx) else 0.0 for k in range(n_elems)]
+        t_arr: JaxNdarray = jnp.array(flat_t).reshape(arg.shape) if arg.shape else jnp.array(flat_t[0])
+        tangents.append(t_arr)
+    return tuple(tangents)
+
+
 def _compute_autodiff_nth_derivative(
     f: DifferentiableCallable,
     f_args: Sequence[PyTree],
@@ -1498,7 +1562,7 @@ def _compute_autodiff_nth_derivative(
     elem_idx: int,
     order: int,
 ) -> float:
-    """Compute the exact n-th analytical derivative via zero_jax.grad or forward-mode _TaylorJet.
+    """Compute the exact n-th analytical derivative via zero_jax.grad/jvp or forward-mode _TaylorJet.
 
     Args:
         f: Function to differentiate.
@@ -1530,11 +1594,30 @@ def _compute_autodiff_nth_derivative(
             grad_list = _pytree_to_float_list(g_tuple[arg_idx])
             return grad_list[elem_idx]
 
+        orig_asarray = _optax_tree.asarray
+
+        def _traced_optax_asarray(
+            val: _OptaxArrayLike,
+            dtype: _OptaxDTypeLike = None,
+        ) -> CompilerTensor:
+            """Preserve JaxNdarray._tensor during zero_jax autodiff tracing in zero_optax.
+
+            Args:
+                val: Input array-like value.
+                dtype: Optional target dtype.
+
+            Returns:
+                Underlying CompilerTensor preserving ProxyTensor tracing nodes.
+            """
+            if isinstance(val, JaxNdarray):
+                return val._tensor
+            return orig_asarray(val, dtype=dtype)
+
         def _jax_f(
             *j_args: JaxPyTree,
             **j_kwargs: JaxPyTree,
         ) -> JaxPyTree:
-            """Adapter forwarding zero_jax.grad arguments to f.
+            """Adapter forwarding zero_jax.grad and zero_jax.jvp arguments to f.
 
             Args:
                 *j_args: Positional array/scalar arguments.
@@ -1547,12 +1630,22 @@ def _compute_autodiff_nth_derivative(
             pytree_j_args: list[PyTree] = [a for a in j_args if _is_pytree_result(a)]
             out = _invoke_differentiable(f, pytree_j_args)
             assert isinstance(out, (JaxNdarray, CompilerTensor, float, int))
-            return out
+            return _unwrap_traced_root_sum(out)
 
-        grad_fn = zero_jax.grad(_jax_f, argnums=arg_idx)
-        grad_out = grad_fn(*jax_args)
-        grad_list = _pytree_to_float_list(grad_out)
-        return grad_list[elem_idx]
+        with (
+            unittest.mock.patch.object(_optax_tree, "asarray", new=_traced_optax_asarray),
+            unittest.mock.patch.object(_optax_regression, "asarray", new=_traced_optax_asarray),
+        ):
+            if isinstance(f, CustomJVPWrapper):
+                unit_tangents = _build_unit_tangent_args(jax_args, arg_idx, elem_idx)
+                _, jvp_tangent = zero_jax.jvp(_jax_f, tuple(jax_args), unit_tangents)
+                return sum(_pytree_to_float_list(jvp_tangent))
+            grad_fn = zero_jax.grad(_jax_f, argnums=arg_idx)
+            grad_out = grad_fn(*jax_args)
+            unit_tangents = _build_unit_tangent_args(jax_args, arg_idx, elem_idx)
+            _, _ = zero_jax.jvp(_jax_f, tuple(jax_args), unit_tangents)
+            grad_list = _pytree_to_float_list(grad_out)
+            return grad_list[elem_idx]
 
     jet_args: list[PyTree] = [
         _rebuild_pytree_with_jets(a, seeded_elem_idx=(elem_idx if idx == arg_idx else None), order=order)

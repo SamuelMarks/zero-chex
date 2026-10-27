@@ -25,6 +25,7 @@ from zero_chex.trees import (
     assert_trees_all_equal_shapes_and_dtypes,
     assert_trees_all_equal_sizes,
     assert_trees_all_equal_structs,
+    assert_trees_all_finite,
 )
 
 __all__ = [
@@ -48,4 +49,5 @@ __all__ = [
     "assert_trees_all_equal_shapes_and_dtypes",
     "assert_trees_all_equal_sizes",
     "assert_trees_all_equal_structs",
+    "assert_trees_all_finite",
 ]

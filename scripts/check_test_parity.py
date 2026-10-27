@@ -7,7 +7,19 @@ import json
 import os
 import sys
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
+sys.path.extend(
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", rel_path))
+    for rel_path in (
+        "src",
+        "../zero-jax/src",
+        "../zero-flax/src",
+        "../zero-grain/src",
+        "../zero-optax/src",
+        "../zero-orbax/src",
+        "../ml-switcheroo-ir/src",
+        "../ml-switcheroo-compiler/src",
+    )
+)
 
 from ml_ecosystem_snapshots import extract_snapshot
 from ml_ecosystem_snapshots.frameworks.chex import CANONICAL_CHEX_OPS
@@ -57,9 +69,20 @@ def get_tested_zero_chex_symbols(tree: ast.Module) -> set[str]:
     return tested
 
 
-def main() -> None:
-    """Check that every public symbol in zero_chex is imported from zero_chex and tested in tests/."""
-    with open("chex_api_snapshot.json", encoding="utf-8") as file_handle:
+def check_test_parity(
+    snapshot_path: str = "chex_api_snapshot.json",
+    tests_dir: str = "tests",
+) -> tuple[int, set[str]]:
+    """Check that every public symbol in zero_chex is imported from zero_chex and tested in tests/.
+
+    Args:
+        snapshot_path: Path to chex_api_snapshot.json.
+        tests_dir: Directory containing test files.
+
+    Returns:
+        Tuple of (total_symbols_count, missing_symbols_set).
+    """
+    with open(snapshot_path, encoding="utf-8") as file_handle:
         api: dict[str, dict[str, str]] = json.load(file_handle)
 
     snap_envelope = extract_snapshot("chex")
@@ -69,8 +92,6 @@ def main() -> None:
     exported_names = set(zero_chex.__all__)
 
     all_symbols = set(api.keys()) | snapshot_names | canonical_names | exported_names
-
-    tests_dir = "tests"
     covered: set[str] = set()
 
     for root, _, files in os.walk(tests_dir):
@@ -81,16 +102,14 @@ def main() -> None:
                     tree = ast.parse(file_handle.read(), filename=path)
                     covered.update(get_tested_zero_chex_symbols(tree).intersection(all_symbols))
 
-    missing = all_symbols - covered
+    return len(all_symbols), all_symbols - covered
 
-    if missing:
-        print("Missing tests (not imported from zero_chex and used in test_* functions) for:")
-        for item in sorted(missing):
-            print(" -", item)
-        sys.exit(1)
-    else:
-        print(f"Test Parity Check Passed! ({len(all_symbols)} symbols imported and verified in test_* functions)")
-        sys.exit(0)
+
+def main() -> None:
+    """Execute test parity check and exit with status 0 on success."""
+    total_count, missing = check_test_parity()
+    assert not missing, f"Missing tests for symbols: {sorted(missing)}"
+    print(f"Test Parity Check Passed! ({total_count} symbols imported and verified in test_* functions)")
 
 
 if __name__ == "__main__":

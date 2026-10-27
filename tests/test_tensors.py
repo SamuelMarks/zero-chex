@@ -382,3 +382,41 @@ def test_cross_ecosystem_tensor_assertions() -> None:
             include_default_message=False,
             exception_type=ValueError,
         )
+
+    # Test bidirectional ZeroArray <-> zero_jax.numpy.ndarray and SerializedArray
+    from zero_orbax.core import SerializedArray
+
+    from zero_chex.types import is_array, is_scalar
+
+    z2d = ZeroArray([[1.0, 2.0], [3.0, 4.0]])
+    assert z2d.tolist() == [[1.0, 2.0], [3.0, 4.0]]
+    j_from_z = z2d.to_jax_array()
+    assert j_from_z.shape == (2, 2)
+    assert z2d.__jax_array__().shape == (2, 2)
+    assert z2d == j_from_z
+    z_roundtrip = ZeroArray.from_jax_array(j_from_z)
+    assert z_roundtrip == z2d
+    z_from_ct = ZeroArray(c_ten)
+    assert z_from_ct.shape == (2, 4)
+    z_from_z = ZeroArray(z2d)
+    assert z_from_z == z2d
+    z0d = ZeroArray(jnp.array(3.0))
+    assert z0d.tolist() == 3.0
+    assert z0d.to_jax_array().shape == ()
+    z_empty = ZeroArray([], shape=(0, 2), dtype=int)
+    assert z_empty.tolist() == []
+    assert z_empty.to_jax_array().shape == (0, 2)
+    assert ZeroArray(True, dtype=bool).to_jax_array().shape == ()
+    assert ZeroArray(1 + 2j, dtype=complex).to_jax_array().shape == ()
+    assert ZeroArray(1.0, dtype=_CustomDTypeName("float32")).to_jax_array().shape == ()
+
+    sa = SerializedArray([[1.0, 2.0], [3.0, 4.0]], shape=(2, 2), dtype="float32")
+    sa0 = SerializedArray(2.0, shape=(), dtype="float32")
+    assert is_array(sa)
+    assert is_scalar(sa0)
+    assert not is_scalar(sa)
+    assert_shape(sa, (2, 2))
+    assert_rank(sa, 2)
+    assert_size(sa, 4)
+    assert_type(sa, "float32")
+    assert z2d == sa

@@ -46,8 +46,10 @@ from zero_chex.types import (
     ArrayProtocol,
     DTypeAttrProtocol,
     LeafValue,
+    MaskedNode,
     PyTree,
     Scalar,
+    SerializedArray,
     ShapeOnlyProtocol,
     SharedMemoryArray,
     SharedMemoryArrayMetadata,
@@ -114,6 +116,8 @@ def _leaf_close(
     Returns:
         True if all corresponding elements are close within tolerance.
     """
+    if isinstance(l1, MaskedNode) or isinstance(l2, MaskedNode):
+        return isinstance(l1, MaskedNode) and isinstance(l2, MaskedNode)
     if _get_shape(l1) != _get_shape(l2):
         return False
     s1 = _extract_flat_scalars(l1)
@@ -258,6 +262,8 @@ def _leaf_equal(l1: LeafValue, l2: LeafValue, strict: bool = False, equal_nan: b
     Returns:
         True if leaves are equal.
     """
+    if isinstance(l1, MaskedNode) or isinstance(l2, MaskedNode):
+        return isinstance(l1, MaskedNode) and isinstance(l2, MaskedNode)
     if _get_shape(l1) != _get_shape(l2):
         return False
     if strict:
@@ -792,9 +798,11 @@ def assert_trees_all_equal_dtypes(
         for (path, l1), l2 in zip(path_leaves0, other_leaves):
             inner1 = l1.value if isinstance(l1, VariableLeafProtocol) else l1
             inner2 = l2.value if isinstance(l2, VariableLeafProtocol) else l2
-            if not isinstance(inner1, (ArrayProtocol, DTypeAttrProtocol, TensorSpec)) or not isinstance(
-                inner2, (ArrayProtocol, DTypeAttrProtocol, TensorSpec)
-            ):
+            if isinstance(inner1, MaskedNode) and isinstance(inner2, MaskedNode):
+                continue
+            if not isinstance(
+                inner1, (ArrayProtocol, SerializedArray, DTypeAttrProtocol, TensorSpec)
+            ) or not isinstance(inner2, (ArrayProtocol, SerializedArray, DTypeAttrProtocol, TensorSpec)):
                 _raise_chex_error(
                     f"Leaf {l1!r} or {l2!r} at {_format_path(path)} is not a (j-)np array exposing dtype.",
                     custom_message=custom_message,
@@ -810,6 +818,9 @@ def assert_trees_all_equal_dtypes(
                     include_default_message=include_default_message,
                     exception_type=exception_type,
                 )
+
+
+assert_trees_all_finite = assert_tree_all_finite
 
 
 def assert_trees_all_equal_shapes(
@@ -930,5 +941,6 @@ __all__ = [
     "assert_trees_all_equal_shapes_and_dtypes",
     "assert_trees_all_equal_sizes",
     "assert_trees_all_equal_structs",
+    "assert_trees_all_finite",
     "tree_map",
 ]

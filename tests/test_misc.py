@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import collections.abc
 import math
+import pathlib
 import warnings
 from collections.abc import Sequence
 
@@ -1217,3 +1218,267 @@ def test_utils_params_product_and_deprecations() -> None:
         dep_src = src_warn.warn_deprecated_function(lambda x: x)
         assert dep_src(9) == 9
         assert len(caught_src) == 1
+
+
+def test_cross_ecosystem_dataclass_autodiff_and_devices(tmp_path: pathlib.Path) -> None:
+    """Test @chex.dataclass round-trip, nnx.Linear + l2_loss grads, and fake_jit/set_n_cpu_devices.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    import zero_flax.nnx as nnx
+    import zero_grain
+    import zero_optax
+    from zero_orbax.checkpoint import PyTreeCheckpointer
+
+    import zero_chex.dataclass as top_dataclass_mod
+    from zero_chex.trees import assert_trees_all_close
+
+    assert top_dataclass_mod.dataclass is dataclass
+
+    @dataclass
+    class _ModelParams(MappableDataclassMixin):
+        """Dataclass parameter container for JIT, grad, Adam, and Orbax round-tripping."""
+
+        w: jnp.ndarray
+        b: jnp.ndarray
+
+    init_p = _ModelParams(w=jnp.array([1.0, 2.0]), b=jnp.array([0.5]))
+    assert init_p._fields == ("w", "b")
+    assert set(init_p._asdict().keys()) == {"w", "b"}
+    remade = _ModelParams._make((jnp.array([1.0, 2.0]), jnp.array([0.5])))
+    assert isinstance(remade, _ModelParams)
+
+    @zero_jax.jit
+    def _jit_step(*args: JaxPyTree, **kwargs: JaxPyTree) -> JaxPyTree:
+        """Scale parameters inside zero_jax.jit.
+
+        Args:
+            *args: Input _ModelParams.
+            **kwargs: Unused kwargs.
+
+        Returns:
+            Scaled _ModelParams.
+        """
+        _ = kwargs
+        p = args[0]
+        assert isinstance(p, _ModelParams)
+        return _ModelParams(w=p.w * 2.0, b=p.b + 1.0)
+
+    jitted_p = _jit_step(init_p)
+    assert isinstance(jitted_p, _ModelParams)
+    assert_trees_all_close(jitted_p.w, jnp.array([2.0, 4.0]))
+
+    def _dc_loss(*args: JaxPyTree, **kwargs: JaxPyTree) -> JaxPyTree:
+        """Compute scalar quadratic loss on _ModelParams.
+
+        Args:
+            *args: Input _ModelParams.
+            **kwargs: Unused kwargs.
+
+        Returns:
+            Scalar loss array.
+        """
+        _ = kwargs
+        p = args[0]
+        assert isinstance(p, _ModelParams)
+        res = jnp.sum(p.w * p.w) + jnp.sum(p.b * p.b)
+        assert isinstance(res, jnp.ndarray)
+        return res
+
+    dc_grads = zero_jax.grad(_dc_loss)(init_p)
+    assert isinstance(dc_grads, _ModelParams)
+    assert_trees_all_close(dc_grads.w, jnp.array([2.0, 4.0]))
+
+    opt = zero_optax.adam(1e-2)
+    opt_state = opt.init(init_p)
+    updates, _ = opt.update(dc_grads, opt_state, init_p)
+    updated_p = zero_optax.apply_updates(init_p, updates)
+    assert isinstance(updated_p, _ModelParams)
+
+    assert isinstance(tmp_path, pathlib.Path)
+    ckpt_path = tmp_path / "dc_ckpt"
+    ckpter = PyTreeCheckpointer()
+    ckpter.save(ckpt_path, init_p)
+    restored_p = ckpter.restore(ckpt_path, item=init_p)
+    assert isinstance(restored_p, _ModelParams)
+    assert_trees_all_close(init_p, restored_p)
+
+    # Composed zero_flax.nnx.Linear + zero_optax.l2_loss numerical gradient verification
+    lin = nnx.Linear(2, 2, rngs=nnx.Rngs(0))
+    x_in = jnp.array([[1.0, -0.5]])
+    y_target = jnp.array([[0.25, 0.75]])
+
+    def _composed_linear_l2(inp: PyTree) -> PyTree:
+        """Evaluate composed nnx.Linear forward pass and zero_optax.l2_loss.
+
+        Args:
+            inp: Input array.
+
+        Returns:
+            Scalar summed L2 loss.
+        """
+        assert isinstance(inp, jnp.ndarray)
+        pred = lin(inp)
+        loss_tensor = zero_optax.l2_loss(pred, ZeroArray([[0.25, 0.75]]))
+        return jnp.sum(jnp.ndarray(loss_tensor))
+
+    assert_numerical_grads(_composed_linear_l2, (x_in,), order=1, atol=1e-2)
+    _ = y_target
+
+    @zero_jax.custom_jvp
+    def _custom_jvp_cube(*args: JaxPyTree, **kwargs: JaxPyTree) -> JaxPyTree:
+        """Compute x^3 with a custom JVP rule.
+
+        Args:
+            *args: Input JaxNdarray.
+            **kwargs: Unused kwargs.
+
+        Returns:
+            Cubed array.
+        """
+        _ = kwargs
+        x_a = args[0]
+        assert isinstance(x_a, jnp.ndarray)
+        return x_a * x_a * x_a
+
+    def _custom_jvp_cube_rule(
+        *args: JaxPyTree,
+        **kwargs: JaxPyTree,
+    ) -> JaxPyTree:
+        """JVP rule for x^3 returning (x^3, 3*x^2*dx).
+
+        Args:
+            *args: Primals and tangents tuples.
+            **kwargs: Unused kwargs.
+
+        Returns:
+            Tuple of (primal_out, tangent_out).
+        """
+        _ = kwargs
+        primals, tangents = args[0], args[1]
+        assert isinstance(primals, tuple) and isinstance(tangents, tuple)
+        (x_p,) = primals
+        (x_t,) = tangents
+        assert isinstance(x_p, jnp.ndarray) and isinstance(x_t, jnp.ndarray)
+        return x_p * x_p * x_p, 3.0 * x_p * x_p * x_t
+
+    _custom_jvp_cube.defjvp(_custom_jvp_cube_rule)
+    assert_numerical_grads(_custom_jvp_cube, (jnp.array([1.5]),), order=1, atol=1e-2)
+
+    # Verify chex.fake_jit() and chex.set_n_cpu_devices(4) with nnx.Jit, nnx.Pmap, and ShardByJaxProcess
+    set_n_cpu_devices(4)
+    assert len(zero_jax.devices("cpu")) == 4
+    shard_opts = zero_grain.ShardByJaxProcess()
+    assert shard_opts.shard_count == 4
+
+    j_lin = nnx.Jit(lin)
+    traced_j_lin = assert_max_traces(j_lin, n=1)
+    _ = traced_j_lin(jnp.array([[1.0, 2.0]]))
+    with fake_jit():
+        _ = traced_j_lin(jnp.array([[1.0, 2.0], [3.0, 4.0]]))
+
+    p_lin = nnx.Pmap(lin)
+    batch_x = jnp.ones((4, 2))
+    p_out = p_lin(batch_x)
+    assert isinstance(p_out, jnp.ndarray) and p_out.shape == (4, 2)
+    set_n_cpu_devices(1)
+
+
+def test_scripts_verification_suite(tmp_path: pathlib.Path) -> None:
+    """Test all verification scripts in scripts/ with 100% branch coverage.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    import ast
+
+    from scripts import (
+        check_3rdparty_deps,
+        check_api_parity,
+        check_compliance,
+        check_docstrings,
+        check_no_any,
+        check_test_parity,
+        update_badges,
+    )
+
+    assert check_docstrings.main is check_3rdparty_deps.main
+    assert check_no_any.main is check_3rdparty_deps.main
+
+    # 1. check_3rdparty_deps
+    check_3rdparty_deps.main(["src/zero_chex/mocks.py", "tests/test_basic.py"])
+    rel_import_file = tmp_path / "good_rel.py"
+    rel_import_file.write_text('"""Doc."""\nfrom . import foo\n', encoding="utf-8")
+    assert check_3rdparty_deps.check_file(str(rel_import_file), is_test_or_script=True)
+    all_py = check_3rdparty_deps.collect_python_files()
+    assert len(all_py) > 10
+
+    bad_files = [
+        ("bad_ignore.py", '"""Doc."""\nx: int = 1  # type:' + " ignore\n"),
+        ("bad_no_mod_doc.py", "x: int = 1\n"),
+        ("bad_no_cls_doc.py", '"""Doc."""\nclass A:\n    pass\n'),
+        ("bad_no_fn_doc.py", '"""Doc."""\ndef f() -> None:\n    pass\n'),
+        (
+            "bad_no_param_doc.py",
+            '"""Doc."""\ndef f(a: int, *args: int, **kwargs: int) -> None:\n    """Only summary."""\n    pass\n',
+        ),
+        ("bad_import.py", '"""Doc."""\nimport numpy\n'),
+        ("bad_from_import.py", '"""Doc."""\nfrom numpy import array\n'),
+        ("bad_banned_from.py", '"""Doc."""\nfrom typing import Any\n'),
+        ("bad_banned_name.py", '"""Doc."""\nx: object = 1\n'),
+        ("bad_banned_call.py", '"""Doc."""\nx = getattr(1, "real")\n'),
+        ("bad_banned_attr.py", '"""Doc."""\nimport typing\nx = typing.Any\n'),
+    ]
+    for fname, src_text in bad_files:
+        fpath = tmp_path / fname
+        fpath.write_text(src_text, encoding="utf-8")
+        assert not check_3rdparty_deps.check_file(str(fpath), is_test_or_script=False)
+
+    # 2. check_api_parity
+    assert check_api_parity.extract_snapshot_param_names("()") == []
+    assert check_api_parity.extract_snapshot_param_names("(a: Tuple[int, int], b=1) -> None") == ["a", "b"]
+    assert check_api_parity.extract_snapshot_param_names("(x, /, *, y=2)") == ["x", "y"]
+    assert check_api_parity.extract_snapshot_param_names("no_parens: int") == ["no_parens"]
+    assert check_api_parity.extract_snapshot_param_names("(x: int,)") == ["x"]
+    check_api_parity.main()
+
+    # 3. check_compliance
+    check_compliance.main()
+
+    # 4. check_test_parity
+    sample_test_ast = ast.parse(
+        "import zero_chex as chex\n"
+        "import os\n"
+        "from zero_chex import assert_shape as ashape\n"
+        "def test_one() -> None:\n"
+        "    chex.assert_rank(1, 0)\n"
+        "    ashape(1, ())\n"
+    )
+    found_syms = check_test_parity.get_tested_zero_chex_symbols(sample_test_ast)
+    assert found_syms == {"assert_rank", "assert_shape"}
+    check_test_parity.main()
+
+    # 5. update_badges
+    assert update_badges.get_color(100.0) == "brightgreen"
+    assert update_badges.get_color(95.0) == "green"
+    assert update_badges.get_color(85.0) == "yellowgreen"
+    assert update_badges.get_color(75.0) == "yellow"
+    assert update_badges.get_color(65.0) == "orange"
+    assert update_badges.get_color(50.0) == "red"
+    assert update_badges.format_cov(100.0) == "100"
+    assert update_badges.format_cov(98.5) == "98.5"
+    assert update_badges.get_api_compliance(str(tmp_path / "missing_todo.md")) == 100.0
+    no_match_todo = tmp_path / "no_match_todo.md"
+    no_match_todo.write_text("# Header only\n", encoding="utf-8")
+    assert update_badges.get_api_compliance(str(no_match_todo)) == 100.0
+    update_badges.update_readme(str(tmp_path / "missing_readme.md"))
+    fake_readme = tmp_path / "README.md"
+    fake_readme.write_text(
+        "[![Test Coverage](https://img.shields.io/badge/test_coverage-90%25-green.svg)](#)\n"
+        "[![Doc Coverage](https://img.shields.io/badge/doc_coverage-90%25-green.svg)](#)\n"
+        "[![API Compliance](https://img.shields.io/badge/api_compliance-90%25-green.svg)](#)\n",
+        encoding="utf-8",
+    )
+    update_badges.update_readme(str(fake_readme), test_cov=100.0, doc_cov=100.0, todo_path="CHEX_TODO.md")
+    assert "test_coverage-100%25-brightgreen" in fake_readme.read_text(encoding="utf-8")

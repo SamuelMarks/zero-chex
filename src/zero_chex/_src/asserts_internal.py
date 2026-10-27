@@ -9,6 +9,7 @@ import threading
 from collections.abc import Callable, Sequence
 from typing import Generic, NoReturn, TypeVar
 
+import zero_jax
 from ml_switcheroo_compiler.core.dtype import DType as CompilerDType
 from ml_switcheroo_ir import DType, TensorShape, TensorSpec
 from typing_extensions import ParamSpec
@@ -22,10 +23,12 @@ from zero_chex.types import (
     DTypeLikeProtocol,
     EllipsisType,
     JaxNdarray,
+    MaskedNode,
     NamedTuplePyTreeProtocol,
     NestedScalarSequence,
     PyTree,
     Scalar,
+    SerializedArray,
     ShapeOnlyProtocol,
     SharedMemoryArray,
     TDimMatcher,
@@ -135,7 +138,8 @@ def enable_asserts() -> None:
 
 
 def clear_trace_counter() -> None:
-    """Reset all recorded function trace counters and pending chexify errors."""
+    """Reset all recorded function trace counters, JAX caches, and pending chexify errors."""
+    zero_jax.clear_caches()
     with RUNTIME_STATE.lock:
         RUNTIME_STATE.trace_counts.clear()
         RUNTIME_STATE.trace_seen_signatures.clear()
@@ -151,7 +155,7 @@ def clear_trace_counter() -> None:
 
 
 def set_n_cpu_devices(n: int | None = None) -> None:
-    """Configure the number of simulated host CPU devices.
+    """Configure the number of simulated host CPU devices and synchronize with zero_jax.
 
     Args:
         n: Number of CPU devices to simulate (defaults to 1 if None).
@@ -161,7 +165,9 @@ def set_n_cpu_devices(n: int | None = None) -> None:
     """
     if n is not None and n < 1:
         raise ValueError(f"Number of CPU devices must be >= 1, got {n}.")
-    RUNTIME_STATE.n_cpu_devices = n if n is not None else 1
+    resolved = n if n is not None else 1
+    RUNTIME_STATE.n_cpu_devices = resolved
+    zero_jax.set_host_device_count(resolved)
 
 
 def get_num_devices_available(platform: str) -> int:
@@ -398,9 +404,12 @@ def extract_flat_scalars(leaf: PyTree) -> list[Scalar]:
         for sub_tensor in leaf:
             out.extend(extract_flat_scalars(sub_tensor))
         return out
-    if isinstance(leaf, JaxNdarray):
+    if isinstance(leaf, (JaxNdarray, SerializedArray)):
         raw_list = leaf.tolist()
-        return _flatten_nested_scalars(raw_list) if isinstance(raw_list, list) else [raw_list]
+        if isinstance(raw_list, (int, float, complex, bool)):
+            return [raw_list]
+        assert isinstance(raw_list, list)
+        return _flatten_nested_scalars(raw_list)
     if isinstance(leaf, (int, float, complex, bool)):
         return [leaf]
     if isinstance(leaf, ToListProtocol):
@@ -441,12 +450,12 @@ def get_leaf_shape(x: PyTree) -> tuple[int, ...]:
         return tuple(x.metadata.shape)
     if isinstance(x, TensorSpec):
         return x.static_shape
-    if isinstance(x, ArrayProtocol):
+    if isinstance(x, (ArrayProtocol, SerializedArray)):
         return tuple(x.shape)
     if isinstance(x, ShapeOnlyProtocol) and has_valid_shape_tuple(x):
         raw_s = x.shape
         return raw_s.static_shape if isinstance(raw_s, TensorShape) else tuple(int(d) for d in raw_s)
-    if isinstance(x, (list, tuple)) and not isinstance(x, NamedTuplePyTreeProtocol):
+    if isinstance(x, (list, tuple)) and not isinstance(x, (NamedTuplePyTreeProtocol, MaskedNode)):
         if not x:
             return (0,)
         first_sub = get_leaf_shape(x[0])
@@ -521,7 +530,7 @@ def get_leaf_type(x: PyTree) -> ArrayDType:
         return str(x.metadata.dtype) if x.metadata.dtype is not None else "float32"
     if isinstance(x, TensorSpec):
         return x.dtype
-    if isinstance(x, (ArrayProtocol, DTypeAttrProtocol)):
+    if isinstance(x, (ArrayProtocol, SerializedArray, DTypeAttrProtocol)):
         return x.dtype
     if isinstance(x, (int, float, complex, bool)):
         return type(x)

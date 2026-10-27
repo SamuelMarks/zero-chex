@@ -21,10 +21,13 @@ from zero_chex.types import (
     DTypeAttrProtocol,
     LeafValue,
     MappableDataclassProtocol,
+    MaskedNode,
     NamedTuplePyTreeProtocol,
     OptStateLeafProtocol,
     PyTree,
     PyTreeDef,
+    Record,
+    SerializedArray,
     ShapeOnlyProtocol,
     ShardingAttrProtocol,
     SharedMemoryArray,
@@ -32,6 +35,7 @@ from zero_chex.types import (
     StateMappingProtocol,
     TaylorScalarProtocol,
     VariableLeafProtocol,
+    _OptStateDataclassBase,
 )
 
 CustomDataclassInstance = Union[MappableDataclassProtocol, DataclassInstanceProtocol]
@@ -57,6 +61,23 @@ class TreeMapCallable(Protocol):
 
 TCls = TypeVar("TCls")
 _CUSTOM_PYTREE_NODES: dict[CustomDataclassType, tuple[FlattenFn, UnflattenFn]] = {}
+_EXTERNAL_AUX_CACHE: dict[CustomDataclassType, PyTree] = {}
+
+
+def _is_registered_custom_node_cls(cls: type) -> bool:
+    """Check whether a class is registered in zero_chex or zero_jax.tree_util PyTree registries.
+
+    Args:
+        cls: Class type to check.
+
+    Returns:
+        True if registered in _CUSTOM_PYTREE_NODES or zero_jax.tree_util registries.
+    """
+    return (
+        cls in _CUSTOM_PYTREE_NODES
+        or cls in jax_tree_util._pytree_with_keys_registry
+        or cls in jax_tree_util._pytree_registry
+    )
 
 
 def register_custom_pytree_node(
@@ -80,13 +101,81 @@ def _lookup_custom_pytree_node(
 ) -> tuple[FlattenFn, UnflattenFn] | None:
     """Look up registered custom PyTree flatten and unflatten functions by class reference.
 
+    Delegates to zero_jax.tree_util registries when a class is registered directly in zero_jax.
+
     Args:
         cls: The class type to look up.
 
     Returns:
         Tuple of (flatten_fn, unflatten_fn) if registered, or None.
     """
-    return _CUSTOM_PYTREE_NODES.get(cls)
+    if cls in _CUSTOM_PYTREE_NODES:
+        return _CUSTOM_PYTREE_NODES[cls]
+    if cls in jax_tree_util._pytree_with_keys_registry:
+        jax_fwk, jax_unflat = jax_tree_util._pytree_with_keys_registry[cls]
+
+        def _fwk_adapter(obj: CustomDataclassInstance) -> tuple[tuple[PyTree, ...], tuple[str, ...]]:
+            """Adapt zero_jax flatten_with_keys to zero_chex FlattenFn signature.
+
+            Args:
+                obj: Custom node instance to flatten.
+
+            Returns:
+                Tuple of (child_values, child_keys).
+            """
+            keyed_children, aux = jax_fwk(obj)
+            _EXTERNAL_AUX_CACHE[cls] = aux
+            vals = tuple(child for _, child in keyed_children)
+            keys = tuple(k.name if isinstance(k, jax_tree_util.GetAttrKey) else str(k) for k, _ in keyed_children)
+            return vals, keys
+
+        def _ufwk_adapter(keys: tuple[str, ...], children: Sequence[PyTree]) -> PyTree:
+            """Adapt zero_jax unflatten_func to zero_chex UnflattenFn signature.
+
+            Args:
+                keys: Child key names.
+                children: Sequence of child values.
+
+            Returns:
+                Reconstructed custom node instance.
+            """
+            aux_val = _EXTERNAL_AUX_CACHE.get(cls, keys)
+            return jax_unflat(aux_val, list(children))
+
+        return _fwk_adapter, _ufwk_adapter
+    if cls in jax_tree_util._pytree_registry:
+        jax_flat, jax_unflat = jax_tree_util._pytree_registry[cls]
+
+        def _flat_adapter(obj: CustomDataclassInstance) -> tuple[tuple[PyTree, ...], tuple[str, ...]]:
+            """Adapt zero_jax flatten_func to zero_chex FlattenFn signature.
+
+            Args:
+                obj: Custom node instance to flatten.
+
+            Returns:
+                Tuple of (child_values, positional_keys).
+            """
+            children_iter, aux = jax_flat(obj)
+            _EXTERNAL_AUX_CACHE[cls] = aux
+            vals = tuple(children_iter)
+            keys = tuple(str(i) for i in range(len(vals)))
+            return vals, keys
+
+        def _uflat_adapter(keys: tuple[str, ...], children: Sequence[PyTree]) -> PyTree:
+            """Adapt zero_jax unflatten_func to zero_chex UnflattenFn signature.
+
+            Args:
+                keys: Positional key names.
+                children: Sequence of child values.
+
+            Returns:
+                Reconstructed custom node instance.
+            """
+            aux_val = _EXTERNAL_AUX_CACHE.get(cls, keys)
+            return jax_unflat(aux_val, list(children))
+
+        return _flat_adapter, _uflat_adapter
+    return None
 
 
 def _is_custom_dataclass_cls(
@@ -100,7 +189,11 @@ def _is_custom_dataclass_cls(
     Returns:
         True if cls is a MappableDataclassProtocol or registered DataclassInstanceProtocol type.
     """
-    return issubclass(cls, MappableDataclassProtocol) or dataclasses.is_dataclass(cls) or cls in _CUSTOM_PYTREE_NODES
+    return (
+        issubclass(cls, MappableDataclassProtocol)
+        or dataclasses.is_dataclass(cls)
+        or _is_registered_custom_node_cls(cls)
+    )
 
 
 def _is_namedtuple_cls(
@@ -140,7 +233,11 @@ def _is_leaf_value(node: PyTree) -> TypeGuard[LeafValue]:
     Returns:
         True if node is a leaf value rather than a traversable container.
     """
-    if isinstance(node, MappableDataclassProtocol) or type(node) in _CUSTOM_PYTREE_NODES:
+    if isinstance(node, (MaskedNode, SerializedArray)):
+        return True
+    if isinstance(node, (Record, MappableDataclassProtocol, _OptStateDataclassBase)) or _is_registered_custom_node_cls(
+        type(node)
+    ):
         return False
     if isinstance(
         node,
@@ -216,8 +313,17 @@ def tree_flatten_with_path(
         Returns:
             PyTreeDef describing the visited subtree.
         """
+        if isinstance(node, Record):
+            rec_child_def = _visit(node.data, path + ("data",))
+            return PyTreeDef(
+                node_type="record",
+                keys=("data",),
+                children=(rec_child_def,),
+                aux_metadata=node.metadata,
+            )
+
         if isinstance(node, (MappableDataclassProtocol, DataclassInstanceProtocol)) and (
-            isinstance(node, MappableDataclassProtocol) or type(node) in _CUSTOM_PYTREE_NODES
+            isinstance(node, MappableDataclassProtocol) or _is_registered_custom_node_cls(type(node))
         ):
             node_cls = type(node)
             custom_entry = _lookup_custom_pytree_node(node_cls)
@@ -255,7 +361,7 @@ def tree_flatten_with_path(
             if isinstance(node, StateMappingProtocol) and type(node).__name__ != "dict":
                 map_cls = type(node)
                 ordered_keys: tuple[DictKey, ...] = tuple(_normalize_dict_key(k) for k in node.keys())
-                child_defs = tuple(_visit(node[k], path + (k,)) for k in ordered_keys)
+                child_defs = tuple(_visit(node[str(k)], path + (k,)) for k in ordered_keys)
                 return PyTreeDef(
                     node_type="state_mapping",
                     keys=ordered_keys,
@@ -263,10 +369,9 @@ def tree_flatten_with_path(
                     custom_cls=map_cls,
                 )
             if isinstance(node, Mapping):
-                sorted_keys: tuple[DictKey, ...] = tuple(
-                    _normalize_dict_key(k) for k in sorted(node.keys(), key=lambda item: (str(type(item)), str(item)))
-                )
-                child_defs = tuple(_visit(node[k], path + (k,)) for k in sorted_keys)
+                sorted_items = sorted(node.items(), key=lambda item: (str(type(item[0])), str(item[0])))
+                sorted_keys: tuple[DictKey, ...] = tuple(_normalize_dict_key(k) for k, _ in sorted_items)
+                child_defs = tuple(_visit(v, path + (_normalize_dict_key(k),)) for k, v in sorted_items)
                 return PyTreeDef(node_type="dict", keys=sorted_keys, children=child_defs)
             if isinstance(node, list):
                 child_defs = tuple(_visit(item, path + (idx,)) for idx, item in enumerate(node))
@@ -366,6 +471,8 @@ def tree_unflatten(treedef: PyTreeDef, leaves: Iterable[LeafValue]) -> PyTree:
         if current_def.node_type == "leaf":
             return next(leaf_iter)
         built_children = tuple(_build(child) for child in current_def.children)
+        if current_def.node_type == "record":
+            return Record(metadata=current_def.aux_metadata, data=built_children[0])
         if current_def.node_type == "list":
             return list(built_children)
         if current_def.node_type == "tuple":
@@ -434,7 +541,7 @@ def tree_all(tree: PyTree) -> bool:
     """
     for leaf in tree_leaves(tree):
         inner = leaf.value if isinstance(leaf, VariableLeafProtocol) else leaf
-        if isinstance(inner, ArrayProtocol):
+        if isinstance(inner, (ArrayProtocol, SerializedArray)):
             if not all(bool(x) for x in _extract_flat_scalars(inner)):
                 return False
         elif not bool(inner):
